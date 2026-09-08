@@ -1,0 +1,25 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.backup
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Log and debug files
+*.log
+crash.dump
+*.tmp
+
+# Scratchpad / internal notes
+walkthrough.md
+GEMINI.md

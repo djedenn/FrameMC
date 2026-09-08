@@ -1,0 +1,59 @@
+# =============================================================================
+# FrameMC - High-Performance Minecraft Proxy Configuration
+# =============================================================================
+
+# Network binding configuration
+bind_address = "0.0.0.0"
+bind_port = 25565
+
+# Server List Ping (Status) appearance
+motd = "§aFrameMC §7High-Performance Minecraft Proxy"
+max_players = 1000
+favicon = "server-icon.png"
+
+# Authentication mode
+online_mode = true
+
+# Default backend server for newly connecting clients
+default_server = "lobby"
+
+# Directory containing Rhai plugin scripts (*.rhai)
+plugins_dir = "plugins"
+
+# Path to the Rhai scripting file for event interception
+script_path = "scripts/main.rhai"
+
+# =============================================================================
+# Backend Server Definitions
+# =============================================================================
+# Supported forwarding modes:
+# - "none": No player info forwarding
+# - "legacy_bungee": BungeeCord handshake appending (client_host\0ip\0uuid)
+# - "velocity_modern": Velocity modern forwarding via velocity:player_info (HMAC-SHA256)
+
+[servers.paper]
+address = "127.0.0.1"
+port = 25568
+forwarding_mode = "velocity_modern"
+forwarding_secret = "framemc_secret_velocity_2026"
+
+[servers.paper2]
+address = "127.0.0.1"
+port = 25569
+forwarding_mode = "velocity_modern"
+forwarding_secret = "framemc_secret_velocity_2026"
+
+[servers.steelmc]
+address = "127.0.0.1"
+port = 25567
+forwarding_mode = "none"
+
+[servers.steelmc2]
+address = "127.0.0.1"
+port = 25566
+forwarding_mode = "none"
+
+[servers.lobby]
+address = "127.0.0.1"
+port = 25566
+forwarding_mode = "none"
