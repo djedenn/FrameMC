@@ -44,3 +44,12 @@ jobs:
 
       - name: Build Release Binary
         run: cargo build --release
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: framemc-${{ matrix.os }}
+          path: |
+            target/release/framemc
+            target/release/framemc.exe
+          if-no-files-found: ignore

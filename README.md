@@ -6,7 +6,7 @@
 
   <p>
     <a href="https://github.com/framemc/framemc/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
-    <a href="#automated-test-suite-evidence"><img src="https://img.shields.io/badge/tests-132%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
+    <a href="#automated-test-suite-evidence"><img src="https://img.shields.io/badge/tests-136%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
     <a href="#backend-compatibility-matrix"><img src="https://img.shields.io/badge/minecraft-1.20.4%20--%201.21.4%2B%20(764--776%2B)-blue?style=flat-square" alt="Protocols" /></a>
     <a href="#benchmarks--resource-footprint"><img src="https://img.shields.io/badge/memory-~15%20MB%20RSS-blueviolet?style=flat-square" alt="Memory" /></a>
     <a href="#benchmarks--resource-footprint"><img src="https://img.shields.io/badge/GC-0ms%20(Zero%20GC)-brightgreen?style=flat-square" alt="Zero GC" /></a>
@@ -86,8 +86,8 @@ FrameMC relies on a comprehensive, byte-accurate automated test suite verifying 
 ### Test Execution Summary
 ```text
 ===============================================================================
-Total Test Invocations:   132
-Passed:                   132
+Total Test Invocations:   136
+Passed:                   136
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -270,6 +270,16 @@ Real TCP socket network tests over local loopback interfaces, listener transitio
 | `test_offline_mode_login_over_tcp` | `tests/login_auth_test.rs` | Real TCP offline mode handshake and LoginSuccess exchange | ✅ Passed |
 | `test_offline_mode_login_protocol_776_over_tcp` | `tests/login_auth_test.rs` | Real TCP Protocol 776 (1.21.4+) offline login flow | ✅ Passed |
 | `test_online_mode_case_insensitive_username_matches` | `tests/login_auth_test.rs` | Real TCP login with mixed-case username matching Mojang profile | ✅ Passed |
+
+### 8. Command-Line Interface & Application Lifecycle (4 Tests)
+Verifies argument parsing, version flags, configuration path overrides, and error diagnostics.
+
+| Test Function | Target Module | Verification Scope | Status |
+| :--- | :--- | :--- | :---: |
+| `test_cli_args_default` | `main` | Default configuration resolution (`config.toml`) when no arguments supplied | ✅ Passed |
+| `test_cli_args_config_flag` | `main` | Explicit `-c` and `--config` custom configuration file path parsing | ✅ Passed |
+| `test_cli_args_version_and_help` | `main` | Clean short and long version (`-v`, `-V`, `--version`) and help (`-h`, `--help`) triggers | ✅ Passed |
+| `test_cli_args_errors` | `main` | Rejection of missing configuration values and unrecognized CLI options | ✅ Passed |
 
 ---
 
@@ -536,7 +546,7 @@ fn on_tab_complete(event) {
 Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for full architectural guidelines, development workflow, and PR standards.
 
 Quick checklist before submitting a pull request:
-1. Ensure all 132 tests pass: `cargo test --all-targets`
+1. Ensure all 136 tests pass: `cargo test --all-targets`
 2. Ensure clippy passes with zero warnings: `cargo clippy --all-targets -- -D warnings`
 3. Ensure formatting is standard: `cargo fmt --check`
 4. Adhere to the core invariants: zero-copy play forwarding, strict async safety, and no custom VarInt parsing where crate utilities exist.

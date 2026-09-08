@@ -2,10 +2,13 @@
 name = "framemc"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80"
 description = "High-performance native Rust Minecraft reverse proxy with zero-copy forwarding, Rhai scripting engine, and Velocity modern forwarding"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/framemc/framemc"
+homepage = "https://github.com/framemc/framemc"
+documentation = "https://docs.rs/framemc"
 authors = ["FrameMC Contributors"]
 keywords = ["minecraft", "reverse-proxy", "bungeecord", "velocity", "tokio"]
 categories = ["network-programming", "game-development"]

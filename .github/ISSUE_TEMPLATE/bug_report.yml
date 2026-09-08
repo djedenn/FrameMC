@@ -1,0 +1,60 @@
+name: Bug Report
+description: Report a reproducible bug or protocol issue in FrameMC
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much detail as possible to help reproduce and diagnose the problem.
+  - type: input
+    id: version
+    attributes:
+      label: FrameMC Version
+      description: What version of FrameMC are you running? (Run `framemc --version`)
+      placeholder: "FrameMC v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: Backend Server & Version
+      description: What downstream server software and Minecraft version are you connecting to?
+      placeholder: "Paper 1.21.4 (build 123) / SteelMC 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: forwarding_mode
+    attributes:
+      label: Forwarding Mode
+      description: What forwarding mode is configured for this backend in `config.toml`?
+      options:
+        - "velocity_modern"
+        - "legacy_bungee"
+        - "none"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Start FrameMC with default config
+        2. Connect with client version 1.21.4
+        3. Execute command `/...`
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & Backtrace
+      description: Paste relevant logs from FrameMC (run with `RUST_LOG=debug`).
+      render: shell

@@ -6,10 +6,20 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use framemc::config::ProxyConfig;
 use framemc::network::listener::start_listener;
 
-/// Parses CLI arguments, returning the path to the configuration file,
-/// or `None` if the program should exit immediately (e.g. after `--help`).
-fn parse_args() -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+#[derive(Debug, PartialEq, Eq)]
+pub enum CliAction {
+    Run { config_path: String },
+    Help,
+    Version,
+}
+
+/// Parses CLI arguments into a structured `CliAction`.
+pub fn parse_cli_args<I, T>(args: I) -> Result<CliAction, String>
+where
+    I: IntoIterator<Item = T>,
+    T: AsRef<str>,
+{
+    let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
     let mut config_path = "config.toml".to_string();
     let mut i = 1;
 
@@ -20,38 +30,49 @@ fn parse_args() -> Result<Option<String>, Box<dyn std::error::Error>> {
                     config_path = args[i + 1].clone();
                     i += 2;
                 } else {
-                    eprintln!("Error: --config requires a path argument");
-                    std::process::exit(1);
+                    return Err("Error: --config requires a path argument".to_string());
                 }
             }
+            "-v" | "-V" | "--version" => {
+                return Ok(CliAction::Version);
+            }
             "-h" | "--help" => {
-                println!("FrameMC - High-Performance Minecraft Proxy");
-                println!();
-                println!("Usage: framemc [OPTIONS]");
-                println!();
-                println!("Options:");
-                println!(
-                    "  -c, --config <PATH>  Path to configuration file [default: config.toml]"
-                );
-                println!("  -h, --help           Display this help message");
-                return Ok(None);
+                return Ok(CliAction::Help);
             }
             other => {
-                eprintln!("Error: Unrecognized option '{other}'");
-                eprintln!("Try '--help' for more information.");
-                std::process::exit(1);
+                return Err(format!(
+                    "Error: Unrecognized option '{other}'. Try '--help' for more information."
+                ));
             }
         }
     }
 
-    Ok(Some(config_path))
+    Ok(CliAction::Run { config_path })
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = match parse_args()? {
-        Some(path) => path,
-        None => return Ok(()),
+    let config_path = match parse_cli_args(std::env::args()) {
+        Ok(CliAction::Run { config_path }) => config_path,
+        Ok(CliAction::Version) => {
+            println!("FrameMC v{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Ok(CliAction::Help) => {
+            println!("FrameMC - High-Performance Minecraft Proxy");
+            println!();
+            println!("Usage: framemc [OPTIONS]");
+            println!();
+            println!("Options:");
+            println!("  -c, --config <PATH>  Path to configuration file [default: config.toml]");
+            println!("  -V, --version        Display version information");
+            println!("  -h, --help           Display this help message");
+            return Ok(());
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
+            std::process::exit(1);
+        }
     };
 
     tracing_subscriber::registry()
@@ -105,4 +126,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("FrameMC Proxy shutdown complete. Exiting cleanly.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_args_default() {
+        let args = ["framemc"];
+        let action = parse_cli_args(args).unwrap();
+        assert_eq!(
+            action,
+            CliAction::Run {
+                config_path: "config.toml".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_args_config_flag() {
+        let args = ["framemc", "-c", "custom_proxy.toml"];
+        let action = parse_cli_args(args).unwrap();
+        assert_eq!(
+            action,
+            CliAction::Run {
+                config_path: "custom_proxy.toml".to_string()
+            }
+        );
+
+        let args2 = ["framemc", "--config", "other.toml"];
+        let action2 = parse_cli_args(args2).unwrap();
+        assert_eq!(
+            action2,
+            CliAction::Run {
+                config_path: "other.toml".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_args_version_and_help() {
+        assert_eq!(
+            parse_cli_args(["framemc", "-v"]).unwrap(),
+            CliAction::Version
+        );
+        assert_eq!(
+            parse_cli_args(["framemc", "-V"]).unwrap(),
+            CliAction::Version
+        );
+        assert_eq!(
+            parse_cli_args(["framemc", "--version"]).unwrap(),
+            CliAction::Version
+        );
+        assert_eq!(parse_cli_args(["framemc", "-h"]).unwrap(), CliAction::Help);
+        assert_eq!(
+            parse_cli_args(["framemc", "--help"]).unwrap(),
+            CliAction::Help
+        );
+    }
+
+    #[test]
+    fn test_cli_args_errors() {
+        assert!(parse_cli_args(["framemc", "-c"]).is_err());
+        assert!(parse_cli_args(["framemc", "--unknown-flag"]).is_err());
+    }
 }

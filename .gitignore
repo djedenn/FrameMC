@@ -27,3 +27,9 @@ desktop.ini
 *.log
 crash.dump
 *.tmp
+
+# Scratch files and temporary notes
+walkthrough.md
+GEMINI.md
+*.bak
+scratch/
