@@ -3,6 +3,13 @@
 **/*.rs.bk
 Cargo.lock.backup
 
+# Executables and debug symbols
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+
 # IDE and editor files
 .idea/
 .vscode/
@@ -14,6 +21,7 @@ Cargo.lock.backup
 .DS_Store
 Thumbs.db
 ehthumbs.db
+desktop.ini
 
 # Log and debug files
 *.log
