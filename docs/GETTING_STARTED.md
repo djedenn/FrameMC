@@ -1,26 +1,23 @@
 # Getting Started with FrameMC
 
-So you want to run FrameMC. This guide walks you through building from source, spinning up your first instance, and wiring it to your backends without tearing your hair out over JVM flags or network sockets.
+Getting FrameMC running takes about two minutes. Because it compiles to a standalone native binary, there's no Java installation to worry about, no classpath arguments to pass, and no tuning JVM garbage collectors before you start.
 
 ---
 
 ## System Requirements
 
-FrameMC compiles down to a single self-contained native binary. You do not need Java, a JVM runtime, or any external shared libraries installed on the host.
+FrameMC doesn't depend on an external runtime or shared C libraries. It runs as a self-contained executable:
 
-- **Operating System**:
-  - Linux (kernel 4.x+, glibc 2.17+ or musl)
-  - Windows 10 / 11 / Server 2016+ (x86_64)
-  - macOS 12+ (Apple Silicon or Intel)
-- **Memory**: ~15 MB RSS baseline. Unlike JVM-based proxies that hold onto hundreds of megabytes for heap pools and garbage collector structures, FrameMC will comfortably run on a 512 MB VPS alongside other services.
-- **CPU**: Any modern x86_64 (SSE4.2 recommended for fast crypto/hashing) or aarch64 core.
-- **Build Toolchain**: Rust 1.80 or newer (`rustc` and `cargo`). Check your version with `rustc --version`.
+- **Operating System**: 64-bit Linux (glibc 2.17+ or musl), Windows 10/11/Server, or macOS 12+ (Apple Silicon or Intel).
+- **Memory footprint**: ~15 MB RSS baseline. Unlike Java proxies that hold onto hundreds of megabytes for heap pools and GC metadata, FrameMC runs comfortably on a 512 MB VPS alongside other services.
+- **CPU**: Any modern x86_64 or aarch64 core. If your x86_64 CPU supports SSE4.2 and AES-NI, encryption handshakes run with hardware acceleration.
+- **Build Toolchain**: Rust 1.80 or newer (`rustc` and `cargo`). Check your installed version with `rustc --version`.
 
 ---
 
 ## Building from Source
 
-Building takes about two minutes on a standard developer machine.
+Building locally takes roughly two minutes on a modern quad-core machine.
 
 ### 1. Grab the repository
 
@@ -31,19 +28,19 @@ cd FrameMC
 
 ### 2. Compile a release build
 
-Always use `--release`. Unoptimized debug builds include heavy runtime assertion checks and skip link-time optimization, which severely tanks AES cipher and packet framing throughput.
+Always compile with `--release`. Unoptimized debug builds include heavy runtime assertions and skip link-time optimization, which severely hurts AES cipher throughput and VarInt parsing speeds.
 
 ```bash
 cargo build --release
 ```
 
-Once Cargo finishes compiling dependencies (Tokio, Rhai, RSA, Flate2), you'll find the finished binary at:
+Once Cargo finishes compiling dependencies (Tokio, Rhai, RSA, Flate2), the compiled binary is located at:
 - **Linux / macOS**: `target/release/framemc`
 - **Windows**: `target\release\framemc.exe`
 
 ### 3. Verify the build locally
 
-Before deploying, run the test suite to confirm your local platform and toolchain pass all wire-level verification tests:
+Before deploying, run the test suite to confirm your local platform passes all wire-level protocol checks:
 
 ```bash
 cargo test --all-targets
@@ -55,7 +52,7 @@ All 136 tests should pass cleanly without ignored or failing cases.
 
 ## First Run & Bootstrapping
 
-Running FrameMC for the first time is straightforward:
+Starting FrameMC without existing config files takes one command:
 
 ```bash
 # On Linux / macOS
@@ -65,9 +62,9 @@ Running FrameMC for the first time is straightforward:
 .\target\release\framemc.exe
 ```
 
-If no `config.toml` exists in the working directory, FrameMC automatically writes a clean, documented template and binds to `0.0.0.0:25565`.
+If no `config.toml` exists in the current directory, FrameMC writes out a documented starter template and binds to `0.0.0.0:25565`.
 
-You'll see log output similar to this:
+Startup logs look like this:
 
 ```text
 2026-09-08T14:20:00Z  INFO framemc: Starting FrameMC Minecraft Proxy using config: config.toml
@@ -76,13 +73,13 @@ You'll see log output similar to this:
 2026-09-08T14:20:00Z  INFO framemc::network::listener: FrameMC listener bound to 0.0.0.0:25565 (online_mode: true)
 ```
 
-At this stage, you have a live proxy listening for Minecraft connections.
+At this point, the proxy is live and waiting for incoming Minecraft client connections.
 
 ---
 
 ## CLI Options & Flags
 
-FrameMC keeps command-line arguments intentionally minimal:
+FrameMC keeps command-line flags deliberately minimal:
 
 ```text
 Usage: framemc [OPTIONS]
@@ -94,20 +91,20 @@ Options:
 ```
 
 ### Running with a custom configuration file
-If you manage multiple environments or test nodes on one box:
+If you manage multiple environments or staging instances on one machine:
 
 ```bash
 ./framemc -c /etc/framemc/staging.toml
 ```
 
 ### Adjusting log verbosity
-FrameMC uses `tracing-subscriber` wired to your environment. To increase or filter log output:
+FrameMC routes logs through `tracing-subscriber`. To change log levels or filter specific subsystems:
 
 ```bash
-# Debug logging across the entire proxy
+# Enable debug logs across the whole proxy
 RUST_LOG=debug ./framemc
 
-# Focus strictly on network handshakes and script execution
+# Focus strictly on network handshakes and Rhai script execution
 RUST_LOG=framemc::network=debug,framemc::script=trace ./framemc
 ```
 
@@ -120,12 +117,12 @@ $env:RUST_LOG="debug"; .\framemc.exe
 
 ## Connecting Your First Backend
 
-By default, FrameMC looks for a backend named `lobby` on `127.0.0.1:25566`.
+By default, FrameMC routes incoming connections to a backend named `lobby` at `127.0.0.1:25566`.
 
-Let's say you have a Paper server running locally on port `25568`:
+Here is how to connect a local Paper server running on port `25568`:
 
-1. Open `config.toml` in your text editor.
-2. Point your default server to Paper and enable modern forwarding:
+1. Open `config.toml` in your editor.
+2. Configure Paper as your default server with modern Velocity forwarding enabled:
 
 ```toml
 default_server = "paper"
@@ -137,7 +134,7 @@ forwarding_mode = "velocity_modern"
 forwarding_secret = "replace_with_a_secure_random_token"
 ```
 
-3. In your Paper server root, open `config/paper-global.yml`:
+3. Open `config/paper-global.yml` in your Paper server directory:
 
 ```yaml
 proxies:
@@ -147,44 +144,49 @@ proxies:
     secret: "replace_with_a_secure_random_token"
 ```
 
-4. Set `online-mode=false` in Paper's `server.properties` (the proxy handles Mojang authentication, so backend servers must not re-authenticate incoming connections).
-5. Restart Paper, launch FrameMC, and join via your Minecraft client at `localhost:25565`.
+4. Set `online-mode=false` in Paper's `server.properties`. Because FrameMC authenticates players with Mojang, backend servers must not re-authenticate incoming connections.
+5. Restart Paper, start FrameMC, and join via your client at `localhost:25565`.
 
-For full setup guides covering Spigot, Fabric, SteelMC, and Vanilla, see the [Configuration Reference](CONFIGURATION.md).
+For setup instructions covering Spigot, Fabric, SteelMC, and Vanilla, check the [Configuration Reference](CONFIGURATION.md).
 
 ---
 
-## Troubleshooting Common Setup Traps
+## Troubleshooting Initial Setup
 
-Here are the most frequent snags admins hit during initial setup and how to fix them quickly:
+When a proxy doesn't connect on the first try, the issue is almost always a port conflict, a firewall block, or mismatched forwarding secrets.
 
-### 1. `Address already in use (os error 98 / 10048)`
-- **Why**: Another process is already bound to port 25565 (often an existing Minecraft server, an old Velocity instance, or a zombie proxy process).
-- **Fix**:
-  - Linux: Run `sudo ss -tulpn | grep 25565` or `lsof -i :25565` to find the offending PID, then kill it.
-  - Windows: Run `netstat -ano | findstr 25565` in PowerShell, then run `taskkill /PID <PID> /F`.
-  - Alternatively, change `bind_port = 25577` in `config.toml`.
+### Port already bound (`os error 98` or `os error 10048`)
+Another process is already listening on port 25565. This is usually an old server instance, an abandoned Velocity daemon, or a previous run of FrameMC that wasn't killed properly.
+- **Linux**: Run `ss -tulpn | grep 25565` or `lsof -i :25565` to find the holding PID, then terminate it with `kill -9 <PID>`.
+- **Windows**: Run `netstat -ano | findstr 25565` in PowerShell, then run `taskkill /PID <PID> /F`.
+- If you're running FrameMC behind HAProxy or a local reverse proxy, change `bind_port = 25577` in `config.toml`.
 
-### 2. `Backend connection failed: Connection refused (os error 111 / 10061)`
-- **Why**: The proxy tried connecting to the destination server (e.g. `127.0.0.1:25566`), but nothing is listening on that address and port.
-- **Fix**: Verify your backend server is fully booted before connecting. Check that the port in `config.toml` matches the `server-port` in your backend's `server.properties`.
+### `Connection refused (os error 111` or `10061)`
+FrameMC accepted the player's connection, but when it reached out to the backend socket (`127.0.0.1:25566`), nothing was listening.
+- Make sure your Minecraft backend is fully booted before connecting. Paper and Spigot often take 15 to 30 seconds to generate spawn chunks before opening their network socket.
+- Verify that the port configured in `config.toml` matches `server-port` in your backend's `server.properties`.
 
-### 3. Paper kicks with `Unable to verify player details` or `Invalid signature`
-- **Why**: The `forwarding_secret` in `config.toml` does not match `proxies.velocity.secret` in Paper's `paper-global.yml`.
-- **Fix**: Ensure both strings match character-for-character. Watch out for accidental leading or trailing spaces and newlines. Also confirm `proxies.velocity.enabled` is set to `true`.
+### Paper kicks with `Unable to verify player details` or `Invalid signature`
+Paper received the `velocity:player_info` login plugin message, calculated the HMAC-SHA256 signature, and found a mismatch.
+- The `forwarding_secret` in `config.toml` must match `proxies.velocity.secret` in Paper's `paper-global.yml` byte-for-byte.
+- Watch out for accidental leading spaces, trailing newlines, or extra quotation marks copied from web guides.
+- Double-check that `proxies.velocity.enabled` is set to `true`.
 
-### 4. Client hangs on "Encrypting..." then disconnects
-- **Why**: The proxy is running with `online_mode = true`, but the server machine cannot reach Mojang's session servers (`sessionserver.mojang.com`) over HTTPS due to firewall rules or outbound DNS failures.
-- **Fix**: Test outbound connectivity with `curl https://sessionserver.mojang.com`. If you are developing locally without an active internet connection, set `online_mode = false` in `config.toml`.
+### Client hangs on "Encrypting..." then disconnects
+When `online_mode = true`, FrameMC reaches out to Mojang's session servers (`sessionserver.mojang.com`) over outbound HTTPS to verify account ownership.
+- If outbound port 443 is blocked by host firewall rules or DNS lookups fail, the connection stalls until our 10-second authentication timeout fires.
+- Run `curl -I https://sessionserver.mojang.com` on the host to verify connectivity.
+- If you are developing locally without an active internet connection, set `online_mode = false` in `config.toml`.
 
-### 5. Players get kicked when switching servers
-- **Why**: Downstream backends have mismatched network configurations (e.g., one backend enforces network compression with a threshold of 256, while the other runs with compression disabled).
-- **Fix**: FrameMC manages decoupled compression translation automatically. However, if a backend takes longer than 5 seconds to reply to the Configuration handshake, FrameMC aborts the switch to prevent the client connection from freezing. Ensure your backend isn't choking on massive world generation or main-thread lag during joins.
+### Players kicked when switching backends mid-game
+If world transfers fail between two running servers:
+- Check backend response times: If the target server takes longer than 5 seconds to reply during the Configuration handshake (often caused by main-thread stall during heavy chunk generation), FrameMC cancels the transfer to keep the client connection from freezing.
+- Verify compression consistency: While FrameMC handles decoupled compression translation automatically, verify that backend servers aren't rejecting custom plugin channels sent by downstream mods.
 
 ---
 
 ## Next Steps
 
-- Check out the full [Configuration Guide](CONFIGURATION.md) for every option in `config.toml`.
-- Learn how to write custom commands, whitelist logic, and routing rules in [Scripting with Rhai](SCRIPTING.md).
-- Inspect the protocol wire flow and state machine design in [Architecture Specification](ARCHITECTURE.md).
+- Explore every configuration key in the [Configuration Reference](CONFIGURATION.md).
+- Write custom commands, permissions, and maintenance logic in [Scripting with Rhai](SCRIPTING.md).
+- Inspect low-level packet framing and state transitions in [Architecture Specification](ARCHITECTURE.md).

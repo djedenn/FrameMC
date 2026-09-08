@@ -41,7 +41,7 @@ cargo test --all-targets -- --nocapture
 
 ## 1. Cryptography & Session Authentication (9 Tests)
 
-Covers RSA-1024 public key export in standard X.509 DER format, PKCS#1 v1.5 shared secret decryption, and Mojang's two's-complement SHA-1 server hash generation. We also verify that the AES-128-CFB8 stream cipher preserves its continuous keystream state across variable TCP chunk fragmentations (testing 1-byte, 7-byte, and 1,024-byte chunks).
+Authentication is where proxies often introduce subtle security bugs or memory leaks. Here we verify two critical aspects: first, that our RSA-1024 public key export in SubjectPublicKeyInfo DER format and PKCS#1 v1.5 decryption match Mojang's specification. Second, that our AES-128-CFB8 stream cipher preserves its continuous keystream state across variable TCP chunk fragmentations (testing 1-byte, 7-byte, and 1,024-byte chunks).
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -59,7 +59,7 @@ Covers RSA-1024 public key export in standard X.509 DER format, PKCS#1 v1.5 shar
 
 ## 2. Protocol Wire Formats, Handshake & Compression (24 Tests)
 
-Tests LEB128 VarInt and VarLong encodings across extreme boundaries (0, max 32-bit/64-bit bounds, negative values) and confirms that over-length VarInts fail closed immediately to prevent memory amplification attacks. Compression tests exercise zlib threshold transitions, raw wire verification against golden reference packets, and decompression bomb limits.
+Minecraft's VarInt format uses 7 bits per byte with the most significant bit as a continuation flag. An unconstrained parser could allow an attacker to stream bytes with the MSB set until memory runs out. We test boundary vectors (0, max 32-bit/64-bit bounds, negatives) and confirm that over-length VarInts fail closed immediately. We also verify zlib threshold handling and decompression bomb limits.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -92,7 +92,7 @@ Tests LEB128 VarInt and VarLong encodings across extreme boundaries (0, max 32-b
 
 ## 3. Login Authentication & Forwarding Handshakes (25 Tests)
 
-Validates Velocity modern forwarding signatures using HMAC-SHA256, null-byte host rewrites for legacy BungeeCord backends, and LoginSuccess packet schemas across protocol versions. Tests also confirm that unauthenticated clients cannot inject spoofed internal proxy channels, and verify clean disconnects when downstream backends misreport online-mode requirements.
+Forwarding player identity to backend servers requires strict HMAC-SHA256 signing under the modern Velocity specification. These tests validate signature computation, null-byte host rewrites for legacy BungeeCord, and LoginSuccess packet schemas across protocol versions. We also verify that unauthenticated clients cannot inject spoofed internal proxy channels.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -126,7 +126,7 @@ Validates Velocity modern forwarding signatures using HMAC-SHA256, null-byte hos
 
 ## 4. Modern Configuration & Registry Caching (7 Tests)
 
-Minecraft 1.20.2 separated configuration negotiation from login. These tests verify non-destructive capture of registry packets (biomes, dimensions, damage types) during active client connections, and test replaying cached codecs to downstream targets during cross-server transfers.
+Minecraft 1.20.2 overhauled connection handshakes by introducing an independent Configuration state. If a proxy does not intercept and cache dimension codecs and registry tags, transferring between servers running different world types causes the client to desync or crash. These tests verify non-destructive capture and replay of registry packets.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -142,7 +142,7 @@ Minecraft 1.20.2 separated configuration negotiation from login. These tests ver
 
 ## 5. Play State Machine, Server Switching & Bridge (30 Tests)
 
-Covers bidirectional TCP stream bridging with 5 MB bulk throughput transfers, client socket FIN propagation, and Brigadier command tree injection for `/server` and `/lobby`. Also tests failover mechanisms that intercept unexpected backend disconnects and route players back to the lobby instead of kicking them from the proxy.
+Once players enter the Play state, FrameMC routes commands and switches servers without dropping the client socket. We verify Brigadier command tree injection (so `/server` and `/lobby` appear in the client's tab-completion HUD), mid-game transfers across different compression thresholds, and failover routing when an active backend crashes unexpectedly.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -181,7 +181,7 @@ Covers bidirectional TCP stream bridging with 5 MB bulk throughput transfers, cl
 
 ## 6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)
 
-Validates engine sandboxing under hostile script conditions: infinite loops terminated at 50,000 opcodes, recursion limits clamped at 32 frames, and exponential string builders rejected at 1,024 bytes. Also confirms that filesystem `import` statements are strictly blocked, tests in-memory key-value primitives, and verifies that all bundled `.rhai` plugins initialize cleanly.
+Scripts should never be able to freeze the Tokio reactor or chew through memory. We test the engine under hostile conditions: infinite loops terminated at 50,000 opcodes, recursion limits clamped at 32 frames, and exponential string builders rejected at 1,024 bytes. We also confirm that filesystem `import` statements are strictly blocked, test in-memory key-value primitives, and verify that all bundled `.rhai` plugins initialize cleanly.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -208,7 +208,7 @@ Validates engine sandboxing under hostile script conditions: infinite loops term
 
 ## 7. Configuration, Network Listener & Integration Tests (19 Tests)
 
-Integration tests binding real loopback TCP sockets. These run end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against a live SteelMC instance.
+These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against a live SteelMC instance.
 
 | Test Function | Location | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |

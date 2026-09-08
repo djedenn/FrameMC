@@ -20,25 +20,16 @@
 
 ---
 
-FrameMC is an asynchronous reverse proxy for Minecraft Java networks. It fronts your backends (Paper, Purpur, Folia, Fabric, Spigot, SteelMC, or Vanilla), negotiates the initial handshake, encryption, and modern 1.20.2+ Configuration phase, then steps out of the data path. Once a connection enters the `Play` state, Tokio bridges the sockets directly via `tokio::io::copy_bidirectional`.
+Most Minecraft proxies run on the JVM and rely on Netty pipelines. Velocity solved BungeeCord's threading bottlenecks years ago, and for standard setups, it works well.
 
-No JVM runtime on the host. No Netty heap churn during player storms. And no burning 700 MB of RAM just to keep an idle proxy process alive.
+Still, running on Java brings real operational pain:
+- When a minigame lobby dumps hundreds of players into a hub at once, allocating packet objects across active sessions hammers young-gen GC. Even with ZGC or Shenandoah, you get tail latency spikes and scheduling jitter.
+- Typical proxies deserialize, parse, wrap, and re-encode every single gameplay packet flowing between player and server. But proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket burns CPU for nothing.
+- An idle Velocity process with two plugins easily sits on 500 MB to 1 GB of memory. If you run multiple edge proxies across different regions or maintain local staging nodes, that overhead adds up fast.
 
-### Why write another proxy?
+FrameMC takes a simpler route: handle the protocol dance during login, negotiate the modern 1.20.2+ Configuration handshake, and then step completely out of the data path.
 
-If you operate a Minecraft network today, Velocity is usually your go-to. Velocity modernized the ecosystem and fixed threading bottlenecks that plagued BungeeCord for a decade.
-
-Still, it runs on the JVM. In practice, that creates distinct operational headaches:
-- **GC pauses under churn**: When a minigame lobby dumps hundreds of players into a hub at once, allocating packet objects across active sessions hammers young-gen GC. Even on modern collectors like ZGC, scheduling jitter and tail latency spikes creep in.
-- **Hot-path heap allocations**: Typical proxies deserialize, parse, wrap, and re-encode every single gameplay packet flowing between player and server. But proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket burns CPU for nothing.
-- **Baseline footprint**: An idle Velocity node with a few plugins easily eats 512 MB to 1 GB of memory. If you run multiple edge proxies across different regions or maintain local staging nodes, that overhead adds up fast.
-
-FrameMC trims the proxy down to what actually matters:
-1. Responds to server list pings and MOTD requests.
-2. Authenticates players (Mojang session servers in online mode, deterministic UUID v3 in offline mode).
-3. Negotiates player forwarding with backends (`velocity_modern` HMAC-SHA256, legacy BungeeCord null-byte host, or direct).
-4. Synchronizes 1.20.2+ Configuration registries so world hops don't kick clients.
-5. Splices the raw TCP streams. In the `Play` state, packets flow straight through kernel socket buffers without user-space buffer allocations.
+Once a player transitions into the `Play` state, Tokio bridges the raw TCP streams directly via `tokio::io::copy_bidirectional`. Packets move straight through kernel socket buffers without user-space buffer allocations. You get ~15 MB RSS, instant startups, and zero GC pauses.
 
 ---
 
@@ -70,11 +61,12 @@ flowchart TD
     PlayBridge -.->|Proxy Intercept| Rhai[Sandboxed Rhai Engine<br/>/server, /lobby, Tab Completion]
 ```
 
-- **Zero-Copy Splicing**: Gameplay packets bypass user-space parsing entirely, yielding forwarding throughput above 480,000 packets/sec.
-- **Decoupled Compression**: Independent compression tracking for client and backend sockets translates zlib framing on the fly when transferring between servers with different thresholds.
-- **Configuration Codec Caching**: Intercepts 1.20.2+ dimension and registry packets, synthesizing clientbound `Respawn` packets for clean world switches without disconnect screens.
-- **Sandboxed Rhai Engine**: Custom routing and commands execute under hard safety boundaries (50k opcode fuel limit, recursion depth 32, 1,024-byte string limits).
-- **Cryptographic Zeroization**: RSA private keys, AES shared secrets, and Velocity HMAC tokens are zeroed in memory on drop via the `zeroize` crate.
+How it works under the hood:
+- **Zero-copy relaying**: During gameplay, user-space doesn't touch the packets. We measure 480,000+ packets/sec throughput because the proxy isn't re-serializing entity motions.
+- **Decoupled compression**: Backend A might run `network-compression-threshold = 256` while Backend B runs with compression off (`-1`). FrameMC tracks client and server compression states independently, converting zlib framing on the fly when switching servers.
+- **Registry & dimension caching**: Minecraft 1.20.2+ split the handshake into a dedicated Configuration phase. FrameMC intercepts dimension types and biomes on join, allowing it to synthesize a valid clientbound `Respawn` packet during mid-game transfers without kicking the player back to the loading dirt screen.
+- **Rhai scripting sandbox**: Embedded native Rust scripting ([Rhai](https://rhai.rs/)) replaces heavy JVM plugin JARs. Scripts run with hard ceilings: 50,000 opcodes max, recursion clamped at 32 frames, and 1 KB string caps. A buggy script can't freeze the Tokio reactor or chew through memory.
+- **Memory zeroization**: Private keys, AES shared secrets, and HMAC tokens implement `Drop` zeroization via the `zeroize` crate so secrets don't linger in unmapped memory.
 
 ---
 

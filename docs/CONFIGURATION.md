@@ -1,14 +1,14 @@
 # FrameMC Configuration Guide
 
-FrameMC uses a single TOML file (`config.toml`) for its network listener, authentication flags, script paths, and backend definitions. 
+FrameMC stores all its settings in a single `config.toml` file located in the current working directory. There are no XML schemas, no nested YAML indentation traps, and no external database connections to manage.
 
-When you start the binary without a configuration file, it writes out a starter configuration bound to `0.0.0.0:25565` pointing to a local fallback backend.
+If no configuration file exists when the binary starts, FrameMC automatically writes a working starter configuration bound to `0.0.0.0:25565` with fallback routes to local backends.
 
 ---
 
-## Complete `config.toml` Reference
+## Complete `config.toml` Example
 
-Here is a fully populated `config.toml` demonstrating all available configuration directives:
+Below is a complete `config.toml` showing every available configuration directive with standard defaults:
 
 ```toml
 # =============================================================================
@@ -16,7 +16,7 @@ Here is a fully populated `config.toml` demonstrating all available configuratio
 # =============================================================================
 
 # IP interface to bind. "0.0.0.0" listens on all IPv4 interfaces.
-# Use "127.0.0.1" if fronting with HAProxy or an external firewall.
+# Use "127.0.0.1" if fronting with HAProxy or a local tunnel.
 bind_address = "0.0.0.0"
 
 # Listening TCP port (standard Minecraft port is 25565)
@@ -104,106 +104,106 @@ forwarding_mode = "none"
 
 ---
 
-## Detailed Key Breakdown
+## Configuration Keys Reference
 
-### Top-Level Settings
+### Top-Level Directives
 
-| Key | Type | Default | Details |
+| Key | Type | Default | Usage Notes |
 | :--- | :--- | :--- | :--- |
-| `bind_address` | String | `"0.0.0.0"` | The local IP address to bind. To accept connections from any interface, keep `"0.0.0.0"`. Set to `"127.0.0.1"` if you run a local load balancer or tunnel. |
-| `bind_port` | Integer | `25565` | Listening TCP port. Non-root users on Linux cannot bind ports below 1024 without `CAP_NET_BIND_SERVICE`. |
-| `motd` | String | `"§aFrameMC..."` | Text component shown in the server browser. Section symbols (`§`) work for formatting. |
-| `max_players` | Integer | `1000` | Display figure for max players in the ping packet. Does not act as a hard connection limit. |
-| `online_mode` | Boolean | `true` | When `true`, enforces Mojang cryptographic handshakes and AES-128-CFB8 stream ciphers. |
-| `favicon` | String (optional) | None | Path to a 64x64 PNG image or raw `data:image/png;base64,...` string. If omitted, FrameMC looks for `server-icon.png` in the proxy directory and encodes it on startup. |
-| `session_server_url` | String (optional) | None | Custom Mojang session server check URL. |
-| `default_server` | String | `"lobby"` | Target backend server where players land initially and where they are sent if an active backend crashes. |
-| `plugins_dir` | String | `"plugins"` | Folder holding independent `.rhai` plugin files. Created automatically if it does not exist. |
-| `script_path` | String | `"scripts/main.rhai"` | Path to the main event intercept script. |
+| `bind_address` | String | `"0.0.0.0"` | Network interface to bind. Keep `"0.0.0.0"` to accept public traffic on all interfaces. Use `"127.0.0.1"` if you place FrameMC behind HAProxy or a local port forwarder. |
+| `bind_port` | Integer | `25565` | TCP port for incoming client connections. On Linux, binding ports below 1024 requires root or granting `CAP_NET_BIND_SERVICE` to the binary. |
+| `motd` | String | `"§aFrameMC..."` | Server list description text component. Supports classic `§` section formatting codes. |
+| `max_players` | Integer | `1000` | Display count shown in the client multiplayer menu. This is purely visual and does not reject connections when exceeded. |
+| `online_mode` | Boolean | `true` | When `true`, enforces official Mojang authentication and AES-128-CFB8 stream encryption. Set to `false` for offline or LAN test networks where UUIDs are derived deterministically via MD5 (UUID v3). |
+| `favicon` | String (optional) | None | File path to a 64x64 PNG image or raw `data:image/png;base64,...` string. When omitted, FrameMC looks for `server-icon.png` in the current folder. |
+| `session_server_url` | String (optional) | None | Custom session verification URL. Primarily used for private auth implementations and mock integration tests. |
+| `default_server` | String | `"lobby"` | Backend where authenticated players land on initial join, and where players are redirected if their active backend crashes. |
+| `plugins_dir` | String | `"plugins"` | Directory scanned for modular `.rhai` script plugins. Automatically created if missing. |
+| `script_path` | String | `"scripts/main.rhai"` | Path to the main event script executed on joins, commands, and tab completions. |
 
 ### Backend Definitions (`[servers.<name>]`)
 
-Each backend entry lives under a `[servers.<name>]` table header. The table key (`<name>`) becomes the identifier used in `/server <name>`, Rhai scripts, and log entries.
+Each downstream server is configured under a `[servers.<name>]` table header. The table key (`<name>`) becomes the identifier used in `/server <name>`, Rhai routing hooks, and proxy logs.
 
-| Key | Type | Default | Details |
+| Key | Type | Default | Usage Notes |
 | :--- | :--- | :--- | :--- |
 | `address` | String | *Required* | Hostname or IP address of the downstream Minecraft server. |
-| `port` | Integer | *Required* | Port of the downstream Minecraft server. |
+| `port` | Integer | *Required* | TCP port of the downstream Minecraft server. |
 | `forwarding_mode` | String | `"none"` | Forwarding strategy. Accepted values: `"velocity_modern"` (or `"modern"` / `"velocity"`), `"legacy_bungee"` (or `"legacy"` / `"bungee"`), `"none"`. |
-| `forwarding_secret` | String (optional) | None | Shared HMAC secret key. Required when using `velocity_modern`. Ignored for other modes. |
+| `forwarding_secret` | String (optional) | None | Shared HMAC secret token. Required for `velocity_modern`; ignored for other forwarding modes. |
 
 ---
 
-## Routing Rules & Failover Mechanics
+## Routing Mechanics & Failover
 
-### Initial Join Routing
-When a player finishes authentication, FrameMC determines the initial backend destination through this order:
+### Join Routing Precedence
+When a player completes login authentication, FrameMC chooses their initial destination through this sequence:
 
-1. Dispatch `on_player_join` to all plugins in `plugins_dir`, followed by `script_path`.
-2. If any script sets `allow: false`, the connection drops immediately with the specified `disconnect_reason`.
-3. If a script specifies `target_server` (e.g. `target_server: "survival"`), the proxy routes the player there.
-4. If no script overrides the target, the player goes to `default_server`.
+1. FrameMC executes `on_player_join` across all plugins in `plugins_dir` (alphabetical order), followed by `script_path`.
+2. If any script returns `allow: false`, the handshake aborts immediately and the player sees the returned `disconnect_reason`.
+3. If a script sets `target_server` (e.g. `target_server: "survival"`), that backend becomes the destination.
+4. If no script specifies an override, the player routes to `default_server`.
 
-### Graceful Mid-Game Server Transfers
-When a player switches servers (via `/server <target>` or a script action):
+### Mid-Game World Transfers
+When a player runs `/server <target>` or a script initiates a transfer:
 
-1. **Independent TCP Handshake**: FrameMC opens a new TCP connection to the destination backend, passing the player's credentials and forwarding data without disconnecting the client.
-2. **Configuration Phase Caching**: In Minecraft 1.20.2+, servers exchange registry codecs (`minecraft:dimension_type`, biomes, damage types) during a distinct Configuration phase. FrameMC intercepts these packets, updates its session cache, and replies to the backend's `FinishConfiguration` packet.
-3. **World Respawn Synthesis**: FrameMC crafts a clientbound `Respawn` packet containing the target backend's dimension attributes, coordinates, and gamemode, delivering it to the client. The client transitions worlds smoothly without kicking back to the title screen.
-4. **Socket Splicing**: Sockets switch to `tokio::io::copy_bidirectional`.
+1. **Independent TCP Handshake**: FrameMC opens a new connection to the target backend and completes the Handshake and Login phases in the background without disturbing the active client socket.
+2. **Configuration Phase Caching**: In Minecraft 1.20.2+, servers exchange registry codecs (`minecraft:dimension_type`, biomes, damage types) during a dedicated Configuration phase. FrameMC intercepts these packets, updates the session cache, and sends `FinishConfiguration` back to the backend.
+3. **World Respawn Synthesis**: FrameMC crafts a clientbound `Respawn` packet containing the target backend's dimension attributes, world coordinates, and gamemode, delivering it to the client. The client renders the new world immediately without triggering a disconnect screen.
+4. **Socket Splicing**: Sockets transition directly to `tokio::io::copy_bidirectional`.
 
-### Backend Disconnect Interception & Failover
-If an active backend crashes, restarts, or closes its socket mid-game:
+### Backend Crash Interception
+If an active backend crashes, restarts, or terminates its TCP stream mid-game:
 
-- Standard proxies let the backend's `Disconnect` packet pass through to the player, dumping them to the main menu.
-- **FrameMC intercepts this packet**. It suppresses the kick screen, initiates a transfer sequence to the configured `default_server` (fallback lobby), sends a clientbound chat warning (`"§cLost connection to backend server. Reconnecting to lobby..."`), and keeps the player connected to the proxy.
+- Most proxies pass the backend's `Disconnect` packet through to the player, dumping them to the title screen.
+- **FrameMC intercepts this packet**. It suppresses the disconnect screen, initiates an immediate transfer sequence to `default_server` (fallback lobby), sends a clientbound chat notice (`"§cLost connection to backend server. Reconnecting to lobby..."`), and keeps the player connected to the proxy.
 
 ---
 
 ## Compression Decoupling & Tuning
 
-Minecraft packet compression is one of the most common failure points in multi-server networks.
+Mismatched packet compression is one of the most common failure modes in Minecraft networks.
 
-### The Mismatched Threshold Problem
-Suppose your lobby server runs with network compression disabled (`network-compression-threshold: -1`), while your survival server enables compression (`network-compression-threshold: 256`). 
+### The Problem with Mismatched Thresholds
+Suppose your lobby server runs with compression disabled (`network-compression-threshold: -1`), but your survival server enables compression (`network-compression-threshold: 256`).
 
-In a naive proxy, when a player moves from lobby to survival, the survival backend expects compressed framing (a VarInt uncompressed size prefix preceding zlib deflated data), while the client socket is still configured for uncompressed raw packets. The client immediately throws a `DecoderException: Badly compressed packet` and crashes.
+In a naive proxy, when a player moves from lobby to survival, the survival backend sends deflated packets preceded by a VarInt uncompressed size. But the client socket is still configured for raw, uncompressed packets. The client's protocol parser immediately crashes with `DecoderException: Badly compressed packet`.
 
-### How FrameMC Solves This
+### FrameMC's Independent Compression Tracking
 FrameMC decouples compression contexts:
 
-- `client_compression_threshold`: The compression threshold negotiated between the Minecraft client and FrameMC during initial login.
-- `backend_compression_threshold`: The compression threshold set by the current downstream backend via the `SetCompression (0x03)` login packet.
+- `client_compression_threshold`: The threshold negotiated between the Minecraft client and FrameMC during initial login.
+- `backend_compression_threshold`: The threshold declared by the active downstream backend via the `SetCompression (0x03)` login packet.
 
-When routing packets:
-1. If the client and backend thresholds match, packets pass through directly.
-2. If they differ (or one is uncompressed while the other is compressed), FrameMC's framing layer strips or adds the zlib envelope dynamically.
-3. Once the session transitions to the uninspected `Play` bridge, the thresholds on both sides remain aligned so raw socket splicing can take over.
+During transitions:
+- If client and backend thresholds match, packets pass through directly.
+- If they differ, FrameMC's framing layer strips or adds the zlib envelope dynamically.
+- Once both sides align, the session transitions to the uninspected `Play` bridge where raw kernel socket splicing takes over.
 
 ### Decompression Bomb Protection
-Malformed or malicious compressed packets can declare a huge uncompressed length to trigger memory exhaustion. FrameMC clamps all decompressed buffers and rejects packets exceeding 2 MiB (`DEFAULT_MAX_PACKET_SIZE = 2 * 1024 * 1024`) before allocating inflate buffers.
+Malformed or hostile compressed packets can declare a massive uncompressed length in their VarInt header to cause heap exhaustion. FrameMC clamps all inflate allocations and drops any packet claiming an uncompressed size greater than 2 MiB (`DEFAULT_MAX_PACKET_SIZE = 2 * 1024 * 1024`) before allocating memory.
 
 ---
 
-## Timeouts & Network Thresholds
+## Connection Timeouts
 
-FrameMC enforces deterministic timeouts across all phases of the connection lifecycle:
+FrameMC enforces deterministic timeouts across the connection lifecycle to prevent slowloris connection-slot exhaustion:
 
-- **Initial Handshake & Login**: 10 seconds. If a connecting client fails to send a valid Handshake and LoginStart within 10 seconds, the socket is dropped to protect against slowloris exhaustion attacks.
+- **Initial Handshake & Login**: 10 seconds. If a client connects but fails to send valid Handshake and LoginStart packets within 10 seconds, the socket is dropped.
 - **Encryption Handshake**: 10 seconds. Awaits the client's `EncryptionResponse` packet.
-- **Mojang Authentication**: 10 seconds. Outbound HTTP request to `sessionserver.mojang.com`. If Mojang's API hangs, the proxy times out and cleanly informs the player.
-- **Server Switching Negotiation**: 5 seconds. If a target backend accepts a TCP connection but hangs during the Login or Configuration phase (for instance, when overloaded by heavy world chunks), FrameMC times out, cancels the switch, notifies the player in chat, and keeps them on their current server.
-- **Status Ping / Server List Ping**: 10 seconds for the initial status request, followed by an immediate graceful socket shutdown after delivering the JSON response and favicon.
+- **Mojang Authentication**: 10 seconds. Outbound HTTPS request to `sessionserver.mojang.com`. If Mojang's API stalls, the proxy times out and informs the player cleanly.
+- **Server Switching Negotiation**: 5 seconds. If a target backend accepts a TCP connection but stalls during the Login or Configuration phase (for example, when frozen by heavy world generation), FrameMC cancels the transfer, informs the player in chat, and keeps them on their current server.
+- **Status Ping**: 10 seconds for the initial status query, followed by an immediate graceful socket shutdown after delivering the JSON response and favicon.
 
 ---
 
-## Backend Server Setup Examples
+## Backend Configuration Examples
 
 ### 1. Paper / Purpur / Folia (Modern Velocity Forwarding)
 
-Velocity modern forwarding is the most secure option. It sends genuine player UUIDs, skins, textures, and IP addresses wrapped in an HMAC-SHA256 signature, preventing client IP spoofing without modifying the handshake host string.
+Velocity modern forwarding is the recommended forwarding strategy. It transfers real player UUIDs, skins, textures, and client IP addresses wrapped in an HMAC-SHA256 signature, preventing IP spoofing without modifying the handshake host string.
 
-#### `config.toml` (FrameMC):
+#### FrameMC (`config.toml`):
 ```toml
 [servers.paper]
 address = "127.0.0.1"
@@ -212,7 +212,7 @@ forwarding_mode = "velocity_modern"
 forwarding_secret = "make_this_a_64_char_random_hex_string"
 ```
 
-#### `config/paper-global.yml` (Paper 1.20+):
+#### Paper (`config/paper-global.yml`):
 ```yaml
 proxies:
   velocity:
@@ -221,21 +221,21 @@ proxies:
     secret: "make_this_a_64_char_random_hex_string"
 ```
 
-#### `server.properties` (Paper):
+#### Paper (`server.properties`):
 ```properties
 online-mode=false
 server-port=25568
 ```
 
-> **Important**: The `forwarding_secret` must match character-for-character. If they differ, Paper logs `Unable to verify player details` and terminates the handshake.
+> **Note**: The `forwarding_secret` must match character-for-character between both files.
 
 ---
 
 ### 2. Spigot / CraftBukkit (Legacy BungeeCord Forwarding)
 
-For legacy Spigot servers that do not support modern plugin-message forwarding:
+For legacy Spigot servers that do not support plugin-message player forwarding:
 
-#### `config.toml` (FrameMC):
+#### FrameMC (`config.toml`):
 ```toml
 [servers.spigot]
 address = "127.0.0.1"
@@ -243,31 +243,31 @@ port = 25570
 forwarding_mode = "legacy_bungee"
 ```
 
-#### `spigot.yml`:
+#### Spigot (`spigot.yml`):
 ```yaml
 settings:
   bungeecord: true
 ```
 
-#### `server.properties` (Spigot):
+#### Spigot (`server.properties`):
 ```properties
 online-mode=false
 server-port=25570
 ```
 
-FrameMC rewrites the initial Handshake packet's host field to:
+FrameMC rewrites the initial Handshake host field to:
 ```text
 <original_host>\0<client_ip>\0<client_uuid>
 ```
-Spigot parses this string to assign the player their genuine UUID and IP address.
+Spigot parses this null-delimited string to assign the player their authentic UUID and remote IP address.
 
 ---
 
-### 3. Fabric / Quilt (Modded)
+### 3. Fabric / Quilt (Modded Backends)
 
-Fabric servers running vanilla-like setups do not have built-in proxy forwarding out of the box. Install the lightweight [FabricProxy-Lite](https://modrinth.com/mod/fabricproxy-lite) mod to add Velocity forwarding support.
+Fabric servers do not include proxy forwarding in vanilla code. Install the lightweight [FabricProxy-Lite](https://modrinth.com/mod/fabricproxy-lite) mod to add Velocity modern forwarding support.
 
-#### `config.toml` (FrameMC):
+#### FrameMC (`config.toml`):
 ```toml
 [servers.fabric]
 address = "127.0.0.1"
@@ -276,13 +276,13 @@ forwarding_mode = "velocity_modern"
 forwarding_secret = "your_shared_secret_here"
 ```
 
-#### `config/FabricProxy-Lite.toml` (Fabric Server):
+#### Fabric Server (`config/FabricProxy-Lite.toml`):
 ```toml
 [general]
 secret = "your_shared_secret_here"
 ```
 
-#### `server.properties` (Fabric):
+#### Fabric Server (`server.properties`):
 ```properties
 online-mode=false
 server-port=25571
@@ -292,9 +292,9 @@ server-port=25571
 
 ### 4. SteelMC (Native Rust Backend)
 
-If you're pairing FrameMC with SteelMC for an end-to-end Rust Minecraft infrastructure:
+Pairing FrameMC with SteelMC creates an end-to-end Rust Minecraft infrastructure with zero JVM garbage collection on either side:
 
-#### `config.toml` (FrameMC):
+#### FrameMC (`config.toml`):
 ```toml
 [servers.steelmc]
 address = "127.0.0.1"
@@ -302,21 +302,21 @@ port = 25567
 forwarding_mode = "none"
 ```
 
-#### `config.toml` (SteelMC):
+#### SteelMC (`config.toml`):
 ```toml
 online_mode = false
 bind_port = 25567
 ```
 
-Connections flow straight through without proxy header overhead, yielding maximum packet throughput and zero JVM garbage collection on either end.
+Connections flow straight through without proxy header overhead, yielding maximum packet throughput.
 
 ---
 
 ### 5. Vanilla Mojang Dedicated Server
 
-To route connections to an unmodded Mojang server binary:
+To route connections to an unmodded Mojang server jar:
 
-#### `config.toml` (FrameMC):
+#### FrameMC (`config.toml`):
 ```toml
 [servers.vanilla]
 address = "127.0.0.1"
@@ -324,10 +324,10 @@ port = 25566
 forwarding_mode = "none"
 ```
 
-#### `server.properties` (Vanilla):
+#### Vanilla (`server.properties`):
 ```properties
 online-mode=false
 server-port=25566
 ```
 
-Because vanilla Mojang servers do not support forwarding protocols, players will appear with their offline UUIDs and the proxy's IP address on the vanilla server console. For production networks where player skins and IP logging matter, use Paper with `velocity_modern`.
+Because vanilla Mojang servers do not parse proxy forwarding headers, players will appear with offline UUIDs and the proxy's IP address on the vanilla server console. For production networks where skins and IP tracking matter, use Paper with `velocity_modern`.

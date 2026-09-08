@@ -1,4 +1,4 @@
-# FrameMC Architecture & Engineering Specification
+# FrameMC Architecture & Protocol Specification
 
 This document details the low-level architectural invariants, protocol wire layouts, and execution lifecycle of **FrameMC**—a high-performance, native Rust reverse proxy for Minecraft Java Edition.
 
@@ -46,16 +46,16 @@ Byte 0          Byte 1          Byte 2
   Continuation    Continuation    Terminal (MSB = 0)
 ```
 
-FrameMC validates the 5-byte and 10-byte limits on every read before allocating or expanding buffers. Any sequence exceeding these boundaries aborts the connection immediately (`Fail-Closed`), preventing memory amplification attacks.
+Because an unconstrained VarInt reader could consume unbounded memory if a hostile client keeps streaming bytes with the MSB set, FrameMC validates the 5-byte and 10-byte ceilings on every read before allocating or expanding buffers. Any sequence exceeding these limits terminates the connection immediately (`Fail-Closed`).
 
 ### 2.2 Mojang SHA-1 Negative Hash
-When `online_mode = true`, client authentication involves computing a specialized hash over the empty server ID string, the shared secret negotiated via RSA, and the proxy's public key in DER format:
+When `online_mode = true`, client authentication requires calculating a specialized hash over the empty server ID string, the shared secret negotiated via RSA, and the proxy's public key in DER format:
 
 ```text
 digest = SHA-1( "" + shared_secret + public_key_der )
 ```
 
-Minecraft formats this digest not as raw hex, but as a big-endian signed two's-complement integer. If the most significant bit is set (negative), the two's complement value is prepended with a `-` sign in the hex representation sent to Mojang's session servers.
+Minecraft formats this digest not as standard raw hex, but as a big-endian signed two's-complement integer (an idiosyncratic artifact of Java's `BigInteger(byte[]).toString(16)`). If the most significant bit is set (negative), the two's-complement value is prepended with a `-` sign in the hex string sent to Mojang's session servers.
 
 ### 2.3 Velocity Modern Forwarding Wire Layout
 Modern downstream servers (Paper, Purpur, Folia, FabricProxy-Lite) receive client identity and profile properties via the `velocity:player_info` login plugin message channel:
@@ -81,7 +81,7 @@ Modern downstream servers (Paper, Purpur, Folia, FabricProxy-Lite) receive clien
 +-------------------------------------------------------------+
 ```
 
-The HMAC signature protects the player payload from tampered IP addresses or forged UUIDs. If the backend fails to verify the HMAC token, the connection is rejected at the backend gate.
+The HMAC signature protects the player payload from forged UUIDs or spoofed IP addresses. If the backend fails to verify the HMAC token, the connection is rejected before the player enters the world.
 
 ---
 
@@ -105,7 +105,7 @@ Client                      FrameMC Proxy                  Target Backend
   │══════════════════════════════╪═══════════════════════════════│
 ```
 
-1. **New Backend Handshake & Login**: FrameMC connects to the target backend and completes Handshake and Login states independently without touching the existing client socket.
+1. **Independent TCP Handshake**: FrameMC connects to the target backend and completes Handshake and Login states independently without touching the existing client socket.
 2. **Compression Decoupling**: If the target backend requires compression or uses a different threshold than the client, FrameMC manages separate compression contexts per socket without corrupting deflate streams.
 3. **Configuration Phase Negotiation**: FrameMC consumes the target backend's Configuration state packets (`KnownPacks`, `RegistryData`, `UpdateTags`) and updates its cached registry state.
 4. **Respawn Packet Synthesis**: A clientbound `Respawn` packet is generated using the target backend's dimension data, cleanly switching the client's world rendering without triggering a disconnect screen.

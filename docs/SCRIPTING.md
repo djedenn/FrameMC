@@ -1,30 +1,19 @@
 # Scripting FrameMC with Rhai
 
-Traditional Minecraft proxies force you to write Java plugins, package fat JARs, manage classloader isolation, and pray that third-party dependencies don't leak memory into the JVM metaspace.
+Writing Java plugins for simple proxy tasks has always felt like overkill. Compiling a fat JAR, wrestling with classloader isolation, and debugging third-party memory leaks just to redirect `/hub` or check a maintenance whitelist burns engineering time.
 
-FrameMC takes a different route: it embeds [Rhai](https://rhai.rs/), a small, safe, fast scripting language written in native Rust. Scripts compile directly to abstract syntax trees in memory and execute inside strict runtime sandboxes. 
-
-You can hot-reload scripts, write custom commands, gate server access, or build dynamic load balancers in a dozen lines of clear code.
+FrameMC embeds [Rhai](https://rhai.rs/), an embedded scripting language designed specifically for Rust. Scripts compile directly to abstract syntax trees in memory and execute inside strict runtime sandboxes. You can edit a `.rhai` script, test it immediately, and run it with native performance and zero JVM metaspace overhead.
 
 ---
 
-## Why Rhai?
+## Script Sandboxing & Safety Limits
 
-When designing FrameMC's extension system, we had three hard requirements:
-1. **No JVM dependencies**: Bringing in Java or JavaScript runtimes (like Nashorn or GraalVM) would destroy FrameMC's 15 MB memory baseline.
-2. **Deterministic safety limits**: A buggy script must never be able to freeze Tokio worker threads with an infinite loop or blow the heap with unbounded string concatenations.
-3. **No C FFI or binary ABI churn**: Native C/Rust plugin ABIs break every time a struct layout changes. Rhai ASTs run cleanly inside the proxy process with zero compilation overhead at runtime.
+Because scripts execute within the Tokio connection loop, an unconstrained script could easily stall worker threads or consume excessive host memory. FrameMC locks the Rhai engine down with strict hardware-style limits:
 
----
-
-## Script Sandboxing & Safety Boundaries
-
-Every Rhai execution in FrameMC runs under strict runtime boundaries:
-
-- **Opcode Fuel Limit**: Capped at **50,000 operations** per hook call (`set_max_operations(50_000)`). If a script contains an accidental `while true` loop or exponential algorithm, Rhai terminates execution immediately with an evaluation error and logs the fault. The proxy connection stays alive.
-- **Recursion Call Depth**: Clamped at **32 call frames** (`set_max_call_levels(32)`). Unbounded recursive functions fail fast before exhausting the thread call stack.
-- **String Allocation Ceiling**: Limited to **1,024 bytes** per string (`set_max_string_size(1024)`). Scripts cannot trigger out-of-memory crashes by doubling strings in a loop.
-- **Filesystem Isolation**: The module resolver is disabled (`DummyModuleResolver`). Scripts cannot call `import` to read arbitrary files from the host filesystem or execute external system binaries.
+- **Opcode Fuel Limit**: Capped at **50,000 operations** per hook call (`set_max_operations(50_000)`). If a script enters an accidental `while true` loop without an exit branch, the fuel gauge hits zero and Rhai halts immediately with an evaluation error. The connection drops back to safe default routing; the proxy process never freezes.
+- **Recursion Call Depth**: Hard-clamped at **32 call frames** (`set_max_call_levels(32)`). Unbounded recursion fails fast before blowing the Tokio worker thread stack.
+- **String Allocation Ceiling**: Limited to **1,024 bytes** per string (`set_max_string_size(1024)`). You can format chat messages and parse arguments, but scripts cannot trigger out-of-memory crashes by doubling strings in a loop.
+- **Filesystem & Shell Isolation**: The module resolver is disabled (`DummyModuleResolver`). Scripts cannot call `import` to read arbitrary files from disk or execute external host binaries.
 
 ---
 
@@ -58,7 +47,7 @@ Fires after the client finishes authentication (Mojang session check or offline 
 | `event.protocol_version` | `i64` | Protocol version integer (e.g. `765` for 1.20.4, `776` for 1.21.4). |
 
 #### Return Value
-Must return a map with the following structure:
+Must return a map with this structure:
 ```rhai
 #{
     allow: true,                 // Set to false to reject the player
@@ -67,27 +56,27 @@ Must return a map with the following structure:
 }
 ```
 
-#### Evaluation Rules
+#### Evaluation Order
 When multiple plugins define `on_player_join`:
-- They run in alphabetical order.
-- If **any** plugin returns `allow: false`, execution stops immediately and the player is disconnected with that plugin's `disconnect_reason`.
-- If a plugin sets `target_server`, that server becomes the target backend for downstream plugins (later plugins can still override it).
+- Plugins execute in alphabetical order, followed by `script_path`.
+- If **any** script returns `allow: false`, execution stops immediately and the player is disconnected with that script's `disconnect_reason`.
+- If a script sets `target_server`, that server becomes the target backend for downstream scripts (subsequent scripts can still override it).
 
 ---
 
 ### 2. `on_player_command(event)`
 
-Intercepts chat commands (any chat input beginning with `/`) before they are sent to the backend server.
+Intercepts chat commands (any chat message beginning with `/`) before they are dispatched to the backend server.
 
 #### Event Payload (`event` map)
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `event.player_name` | `String` | Username of the player running the command. |
+| `event.player_name` | `String` | Username of the player executing the command. |
 | `event.command` | `String` | Full command string including leading slash (e.g. `"/server survival"`). |
 | `event.current_server` | `String` | Name of the backend server the player is currently on. |
 
 #### Return Value
-Must return a map with the following structure:
+Must return a map with this structure:
 ```rhai
 #{
     cancel: true,                // true prevents the command from reaching the backend
@@ -97,8 +86,8 @@ Must return a map with the following structure:
 ```
 
 #### Evaluation Rules
-- If a plugin returns `cancel: true` or sets `reroute_server`, the command is considered handled: subsequent plugins are skipped and the command is blocked from reaching the downstream backend.
-- If no plugin cancels the command (`cancel: false`), the command passes through to the backend unmodified.
+- If a plugin returns `cancel: true` or sets `reroute_server`, the command is considered handled: subsequent scripts are skipped and the command is blocked from reaching the downstream backend.
+- If no script cancels the command (`cancel: false`), the command passes through to the backend unmodified.
 
 ---
 
@@ -128,18 +117,18 @@ Suggestions from all plugins are aggregated and delivered back to the client.
 FrameMC exposes a curated set of thread-safe helper functions directly in the Rhai global scope:
 
 ### Shared In-Memory Key-Value Store
-Because scripts execute across multiple connections concurrently, FrameMC provides a thread-safe in-memory store for sharing state (cooldowns, maintenance flags, session counts):
+Because scripts execute across multiple connections concurrently, FrameMC provides a thread-safe in-memory store backed by `RwLock<HashMap<String, Dynamic>>` for sharing state (cooldowns, maintenance flags, session counts):
 
 - `kv_set(key: String, value: Any)`: Stores a value under `key`. Supports strings, booleans, numbers, arrays, and maps.
 - `kv_get(key: String) -> Any`: Retrieves the value for `key`. Returns unit `()` if the key does not exist.
-- `kv_has(key: String) -> bool`: Checks whether `key` is present.
+- `kv_has(key: String) -> bool`: Checks whether `key` is present in the store.
 - `kv_remove(key: String) -> bool`: Deletes `key`. Returns `true` if it existed.
 - `kv_keys(prefix: String) -> Array`: Returns a sorted array of all keys starting with `prefix` (pass `""` for all keys).
-- `kv_clear()`: Wipes all keys from the store.
+- `kv_clear()`: Clears all keys from the store.
 
 ### Time & Timestamps
 - `timestamp_sec() -> i64`: Current Unix timestamp in seconds.
-- `timestamp_ms() -> i64`: Current Unix timestamp in milliseconds. Ideal for rate limiting and command cooldowns.
+- `timestamp_ms() -> i64`: Current Unix timestamp in milliseconds. Ideal for rate limiting and command cooldown math.
 
 ### Server Queries
 - `get_servers() -> Array`: Returns an array of strings representing all backend servers declared in `config.toml` (e.g. `["lobby", "paper", "steelmc"]`).
@@ -147,7 +136,7 @@ Because scripts execute across multiple connections concurrently, FrameMC provid
 - `server_exists(name: String) -> bool`: Case-insensitive check whether `name` is a configured backend.
 
 ### Console Logging
-Messages are dispatched to FrameMC's structured tracing system:
+Messages are dispatched directly to FrameMC's structured tracing subscriber:
 - `proxy_info(message: String)`: Logs at `INFO` level (`[Rhai] ...`).
 - `proxy_warn(message: String)`: Logs at `WARN` level (`[Rhai] ...`).
 - `proxy_error(message: String)`: Logs at `ERROR` level (`[Rhai] ...`).
@@ -302,7 +291,7 @@ fn on_player_command(event) {
 
 ### Example 3: Command Cooldowns / Spam Protection (`plugins/rate_limit.rhai`)
 
-Prevents players from spamming heavy proxy commands using timestamps and the key-value store:
+Prevents players from spamming heavy proxy commands using timestamps and the in-memory key-value store:
 
 ```rhai
 fn on_player_command(event) {
@@ -366,9 +355,9 @@ fn on_player_join(event) {
 
 ---
 
-## Best Practices & Performance Tips
+## Practical Tips for Rhai Scripts
 
-1. **Keep hooks non-blocking**: Rhai scripts execute inside the connection handler. Do not perform busy loops or massive string concatenations. Keep logic focused on fast lookups, validations, and map returns.
-2. **Use section color codes**: Minecraft's chat protocol supports formatting with `§` codes (`§a` green, `§c` red, `§e` yellow, `§7` gray, `§f` white, `§l` bold, `§r` reset).
-3. **Prefix key-value keys**: To prevent name collisions between scripts, prefix your keys with the plugin name or domain (e.g. `"party:" + id`, `"auth:" + uuid`).
-4. **Log errors via `proxy_warn` and `proxy_error`**: If something unexpected happens, log it with context so administrators can debug from server logs without needing full stack traces.
+- **Keep hooks fast**: Scripts run directly in Tokio's connection handler. Avoid heavy loops or complex string manipulation. Do quick checks, inspect maps, and return.
+- **Use section sign formatting**: Minecraft chat components support classic `§` color codes (`§a` green, `§c` red, `§e` yellow, `§7` gray, `§f` white, `§l` bold, `§r` reset).
+- **Prefix key-value keys**: To prevent state collisions between multiple plugins, namespace your keys (e.g. `"party:" + id`, `"auth:" + uuid`).
+- **Use structured logs**: Call `proxy_warn` or `proxy_error` when an unexpected edge case occurs so admins can spot issues directly in server terminal output.
