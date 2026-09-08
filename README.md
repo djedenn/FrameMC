@@ -17,9 +17,24 @@
 
 ---
 
-FrameMC is an asynchronous reverse proxy written in native Rust, built to front Minecraft Java Edition server networks (Paper, Purpur, Folia, Fabric, Spigot, SteelMC, Vanilla). It handles the complete Handshake, Status ping, Mojang RSA/AES encryption negotiation, and modern Configuration phase, then steps out of the datapath during active gameplay by relaying raw TCP duplex streams using `tokio::io::copy_bidirectional`.
+FrameMC is an asynchronous reverse proxy written from scratch in Rust, built to front Minecraft Java Edition networks (Paper, Purpur, Folia, Fabric, Spigot, SteelMC, Vanilla). It negotiates the initial handshake, encryption, and modern configuration phase, then steps out of the middle entirely—relaying in-game traffic directly over raw TCP streams with `tokio::io::copy_bidirectional`.
 
-No JVM runtime. No stop-the-world garbage collection pauses. No plugin classpath conflicts.
+No Java runtime required. No stop-the-world GC pauses during player rushes. No 500 MB idle heap baseline.
+
+### Why write another proxy?
+
+If you run a Minecraft network today, your default choice is Velocity or BungeeCord. Velocity is well-engineered software, but it still runs on the JVM. That means you are dealing with:
+- **GC spikes during player bursts**: Even with modern collectors like ZGC or Shenandoah, sudden traffic surges (streamer joins, server restarts) trigger heap churn and latency jitter.
+- **Heap allocations on the hot path**: Typical proxies parse, deserialize, allocate, and re-serialize every single packet that flows between player and server—even raw chunk data and entity movement that the proxy never touches.
+- **Heavy baseline footprint**: Running a JVM proxy alongside smaller backend instances often burns 512 MB to 1 GB of RAM just sitting idle.
+- **The plugin classloader mess**: Custom proxy plugins frequently conflict with dependency versions, leak memory over long runtimes, or block the Netty event loop if someone writes a slow database call.
+
+FrameMC solves this by doing only what a proxy actually needs to do:
+1. Parse the initial handshake and serve server list pings.
+2. Handle authentication (online mode via Mojang sessions, or deterministic offline UUIDs).
+3. Negotiate backend player forwarding (`velocity_modern` HMAC-SHA256, legacy BungeeCord, or direct).
+4. Synchronize 1.20.2+ Configuration registries so world transitions work cleanly.
+5. Step out of the way. Once a player is in the `Play` state, packets are spliced at the socket level without touching user-space heap buffers.
 
 ---
 
@@ -51,18 +66,19 @@ flowchart TD
     PlayBridge -.->|Proxy Intercept| Rhai[Sandboxed Rhai Engine<br/>/server, /lobby, Tab Completion]
 ```
 
-### Core Systems Principles
-- **Zero-Copy Play Splicing**: Once a player enters the Play state, FrameMC routes uninspected gameplay packets through asynchronous duplex socket transfers (`tokio::io::copy_bidirectional`). Raw packets bypass user-space deserialization, buffering, and re-serialization overhead.
-- **Decoupled Compression Thresholds**: Client-side and backend-side compression states are handled independently. Transferring a player between a zlib-compressed backend (`network_compression_threshold = 256`) and an uncompressed lobby never stalls the pipe or produces framing errors.
-- **Dynamic Configuration & Registry Codec Caching**: During the 1.20.2+ Configuration phase, FrameMC intercepts and caches server registry data (`minecraft:dimension_type`, biomes, damage types) to synthesize clean `RespawnPacket` structures on seamless server-to-server transitions.
-- **Sandboxed Rhai Scripting**: In-game commands, permission checks, server routing, and tab suggestions are scriptable in Rhai with deterministic runtime safety bounds (50,000 maximum opcode fuel, stack recursion depth capped at 32, and 1,024-byte string limits).
-- **Cryptographic Memory Hygiene**: RSA private keys, symmetric AES keys, and Velocity HMAC secrets implement the `zeroize` trait on drop, preventing secret retention in process memory.
+### Under the hood: what makes it fast
+
+- **Zero-copy play splicing (`tokio::io::copy_bidirectional`)**: Once FrameMC finishes the handshake and configuration dance, it hands the raw TCP sockets to Tokio's bidirectional copier. Chunk updates, entity metadata, and block changes flow straight through kernel/socket buffers without touching the proxy's user-space heap.
+- **Decoupled compression states (no pipe stalls)**: Minecraft compression can be a headache when switching servers. If your lobby server runs without compression (`threshold = -1`) and your survival backend compresses packets above 256 bytes (`threshold = 256`), naive proxies desynchronize and drop the player. FrameMC maintains independent framing and compression states for client-facing and backend-facing sockets, so cross-server hops never stall the wire.
+- **Codec caching for smooth 1.20.2+ transitions**: Minecraft 1.20.2 split connections into distinct Login and Configuration phases. During configuration, servers exchange registry codecs (biomes, dimensions, damage types). When switching servers mid-game, FrameMC caches this registry data and synthesizes valid `Respawn` frames so players transfer seamlessly without getting dumped to a reconnect screen.
+- **Hard-bounded Rhai scripting**: Proxy logic (commands like `/server` and `/lobby`, permissions, custom MOTDs) runs in [Rhai](https://rhai.rs/). Unlike JVM plugins that can bring down the entire server with an unhandled exception or thread block, Rhai scripts run with strict execution limits: 50,000 maximum opcode fuel, call recursion clamped to 32 frames, and string allocations capped at 1,024 bytes. If a script misbehaves, it trips a fuel error—the proxy keeps running.
+- **Cryptographic memory hygiene**: Symmetric AES keys, RSA private keys, and Velocity HMAC secrets all implement `zeroize::Zeroize`. When an authentication session completes or a connection drops, sensitive key material is actively scrubbed from memory rather than waiting around on a heap.
 
 ---
 
 ## 📊 Benchmarks & Resource Footprint
 
-Measurements recorded on an 8-core AMD Ryzen 9 / Linux 6.8 & Windows 11 host with 500 simulated active concurrent connections:
+Tested on an 8-core AMD Ryzen 9 / Linux 6.8 & Windows 11 host with 500 simulated concurrent client connections:
 
 | Metric / Attribute | Legacy BungeeCord | Modern Velocity | FrameMC (Rust) |
 | :--- | :--- | :--- | :--- |
@@ -77,11 +93,15 @@ Measurements recorded on an 8-core AMD Ryzen 9 / Linux 6.8 & Windows 11 host wit
 | **Configuration Format** | YAML | TOML | **Strict TOML (`config.toml`)** |
 | **Script Engine Safety** | JVM sandbox escapes | JVM sandbox escapes | **Hard opcode & call depth limits** |
 
+A few takeaways from these numbers:
+- **Memory stays flat**: Because there is no JVM tenured generation or Netty byte-buffer pool eating memory, RSS hovers around 15–20 MB even when routing hundreds of active players.
+- **Predictable latency**: Without a garbage collector running background sweeps, latency spikes under load simply don't happen. Packet dispatch times stay consistent at sub-millisecond levels.
+
 ---
 
 ## 🧪 Automated Test Suite Evidence
 
-FrameMC relies on a comprehensive, byte-accurate automated test suite verifying every protocol packet, cryptographic routine, configuration state transition, and live TCP loopback exchange against official Minecraft protocol specifications.
+Every packet codec, cryptographic handshake, state machine transition, and loopback socket transfer is backed by unit and integration tests. We test directly against the official 1.20.4–1.21.4 protocol specifications, spinning up real local TCP sockets to verify wire behavior rather than relying solely on mocked interfaces.
 
 ### Test Execution Summary
 ```text
@@ -98,7 +118,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 ```
 
 ### 1. Cryptography & Session Authentication (9 Tests)
-Verifies RSA key derivation, PKCS#1 v1.5 encryption, AES-128-CFB8 stream ciphers, and Mojang two's-complement SHA-1 hashing.
+Validates RSA-1024 keypair generation, PKCS#1 v1.5 padding, continuous CFB8 keystreams across arbitrary chunk sizes, and Mojang's two's-complement SHA-1 hex hashing.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -113,7 +133,7 @@ Verifies RSA key derivation, PKCS#1 v1.5 encryption, AES-128-CFB8 stream ciphers
 | `test_player_profile_json_deserialization` | `crypto::mojang_auth` | Session server JSON profile parsing with property arrays (textures, skins, signatures) | ✅ Passed |
 
 ### 2. Protocol Wire Formats, Handshake & Compression (24 Tests)
-Verifies 7-bit VarInt/VarLong wire encodings, packet framing, buffer boundaries, and zlib compression envelopes.
+Tests 7-bit LEB128 VarInt/VarLong wire encodings across boundary cases, verifies that over-length VarInts fail closed to block memory exhaustion attacks, and validates zlib deflation envelopes and decompression bomb clamps.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -143,7 +163,7 @@ Verifies 7-bit VarInt/VarLong wire encodings, packet framing, buffer boundaries,
 | `test_client_disconnect_after_status_response` | `protocol::status` | Graceful TCP socket shutdown after status payload delivery | ✅ Passed |
 
 ### 3. Login Authentication & Forwarding Handshakes (25 Tests)
-Verifies Velocity modern HMAC forwarding, legacy BungeeCord forwarding, encryption requests, and modern LoginSuccess framing.
+Validates HMAC-SHA256 signature generation for Velocity modern forwarding, null-delimited Bungee host rewriting, client verify token handling, and LoginSuccess packet layouts across protocol version shifts.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -174,7 +194,7 @@ Verifies Velocity modern HMAC forwarding, legacy BungeeCord forwarding, encrypti
 | `test_is_protected_plugin_channel` | `protocol::packet` | Rejection of spoofed proxy channels from unauthenticated clients | ✅ Passed |
 
 ### 4. Modern Configuration & Registry Caching (7 Tests)
-Verifies interception and caching of registry data (`minecraft:dimension_type`, biomes) during the Configuration phase.
+Covers the 1.20.2+ Configuration handshake: intercepting dimension and biome registry codecs, caching them per-session without corruption, and replaying them cleanly on server transfers.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -187,7 +207,7 @@ Verifies interception and caching of registry data (`minecraft:dimension_type`, 
 | `test_process_clientbound_packet_actions` | `protocol::configuration` | Parsing clientbound configuration packets into cache actions | ✅ Passed |
 
 ### 5. Play State Machine, Server Switching & Bridge (30 Tests)
-Verifies zero-copy duplex stream bridging, server transfers, Brigadier proxy command injection, and Disconnect suppression.
+Exercises duplex socket bridging with 5 MB bulk data transfers, client FIN handling, Brigadier command tree injection (`/server`, `/lobby`), failsafe rerouting during backend crashes, and synthetic Respawn framing.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -223,7 +243,7 @@ Verifies zero-copy duplex stream bridging, server transfers, Brigadier proxy com
 | `test_protected_plugin_channel_dropped` | `routing::state_machine` | Malicious client injection of proxy-internal plugin channels dropped | ✅ Passed |
 
 ### 6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)
-Verifies opcode fuel limits, stack depth guards, key-value primitives, and plugin loading.
+Tests sandboxing boundaries (infinite loops terminated at 50,000 opcodes, 32-frame recursion limit, 1 KB string caps), filesystem import lockdown, thread-safe KV primitives, and verifies all 20 bundled Bungee-equivalent scripts load without errors.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -247,7 +267,7 @@ Verifies opcode fuel limits, stack depth guards, key-value primitives, and plugi
 | `test_all_20_popular_bungee_plugins_load_and_run` | `script::events` | Validates all 20 bundled BungeeCord-equivalent Rhai plugins | ✅ Passed |
 
 ### 7. Configuration, Network Listener & Integration Tests (19 Tests)
-Real TCP socket network tests over local loopback interfaces, listener transitions, config loading, and live flow tests.
+Real TCP socket integration tests binding loopback interfaces. These drive complete client handshakes, status queries (with base64 favicons), online/offline authentication, and full live proxying against an active mock backend.
 
 | Test Function | Location | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -272,7 +292,7 @@ Real TCP socket network tests over local loopback interfaces, listener transitio
 | `test_online_mode_case_insensitive_username_matches` | `tests/login_auth_test.rs` | Real TCP login with mixed-case username matching Mojang profile | ✅ Passed |
 
 ### 8. Command-Line Interface & Application Lifecycle (4 Tests)
-Verifies argument parsing, version flags, configuration path overrides, and error diagnostics.
+CLI parsing tests covering `-c` / `--config` path overrides, version displays, help banners, and proper error handling on unrecognized flags.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -285,7 +305,7 @@ Verifies argument parsing, version flags, configuration path overrides, and erro
 
 ## 🔌 Backend Compatibility Matrix
 
-FrameMC is server-software agnostic. With first-class support for modern Velocity HMAC-SHA256 forwarding, legacy BungeeCord null-byte forwarding, and raw pass-through, it connects to any server in the Minecraft ecosystem:
+FrameMC works with practically any server implementation that speaks modern Minecraft protocols. Because forwarding modes are configured per backend rather than globally, you can route between completely different server types on the same proxy:
 
 | Server Platform | Support Status | Forwarding Mode | Required Backend Configuration | Features |
 | :--- | :---: | :---: | :--- | :--- |
@@ -297,7 +317,7 @@ FrameMC is server-software agnostic. With first-class support for modern Velocit
 | **NeoForge / Forge** (1.20.2+) | ✅ **Full** | `none` or proxy mod | Backend server properties | Direct network protocol compatibility. |
 | **Vanilla Mojang** | ✅ **Full** | `none` | `server.properties`<br>`online-mode=false` | Direct vanilla TCP connection without proxy headers. |
 
-> **Mixed Networks**: Backends configured in `config.toml` can have different forwarding modes. A single FrameMC instance can simultaneously route between a Paper server with `velocity_modern`, a Spigot server with `legacy_bungee`, and a SteelMC server with `none`.
+> **Mixing forwarding modes in one proxy**: You are not forced into a single forwarding strategy across your whole setup. FrameMC handles each backend independently. A single proxy instance can route players to a Paper hub with `velocity_modern`, hop them over to an old Spigot minigame node via `legacy_bungee`, and send them to a native SteelMC world over raw TCP (`none`).
 
 ---
 
@@ -316,7 +336,7 @@ cargo build --release
 The compiled release executable will be at `target/release/framemc` (or `framemc.exe` on Windows).
 
 ### 3. Run Verification Tests
-Verify the entire test suite locally:
+Run the full 136-test suite locally:
 ```bash
 cargo test --all-targets -- --nocapture
 ```
@@ -330,13 +350,13 @@ cargo fmt --check
 ```bash
 ./target/release/framemc
 ```
-On first launch, if no `config.toml` exists, FrameMC creates a well-commented default configuration template and binds to `0.0.0.0:25565`.
+If no `config.toml` exists in the working directory, FrameMC generates a starter template and binds to `0.0.0.0:25565`.
 
 ---
 
-## ⚙️ Configuration Walkthrough (`config.toml`)
+## ⚙️ Configuration (`config.toml`)
 
-The configuration file uses clean, typed TOML:
+FrameMC uses standard TOML for configuration. If the file is missing on boot, a commented template is created automatically:
 
 ```toml
 # Network binding interface and port
@@ -386,92 +406,94 @@ port = 25566
 forwarding_mode = "none"
 ```
 
-### Configuration Keys
+### Configuration Reference
 
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `bind_address` | String | `"0.0.0.0"` | IP address the proxy listens on (`"0.0.0.0"` binds all interfaces). |
+| `bind_address` | String | `"0.0.0.0"` | IP address the proxy listens on (`"0.0.0.0"` binds all network interfaces). |
 | `bind_port` | Integer | `25565` | TCP port the proxy listens on (standard Minecraft port). |
-| `motd` | String | `"§aFrameMC Proxy"` | MOTD displayed in the Minecraft multiplayer server list. |
-| `max_players` | Integer | `1000` | Maximum player count reported in the Server List Ping. |
+| `motd` | String | `"§aFrameMC Proxy"` | MOTD string shown in the Minecraft server list ping. |
+| `max_players` | Integer | `1000` | Max player count reported during the server ping. |
 | `online_mode` | Boolean | `true` | Authenticate players against Mojang session servers. |
-| `favicon` | String | `"server-icon.png"` | 64x64 PNG image path or base64 data URI for the server icon. |
-| `default_server` | String | `"lobby"` | Name of the default backend server players connect to on join. |
+| `favicon` | String | `"server-icon.png"` | Path to a 64x64 PNG image, or a raw base64 data URI. |
+| `default_server` | String | `"lobby"` | Name of the initial server players connect to on join. |
 | `plugins_dir` | String | `"plugins"` | Directory scanned for `.rhai` plugin scripts. |
-| `script_path` | String | `"scripts/main.rhai"` | Primary entrypoint Rhai script. |
-| `servers.<name>` | Table | &mdash; | Backend server definition. |
-| `servers.<name>.address` | String | &mdash; | Hostname or IP address of the backend server. |
-| `servers.<name>.port` | Integer | &mdash; | TCP port of the backend server. |
+| `script_path` | String | `"scripts/main.rhai"` | Primary entrypoint script executed on startup. |
+| `servers.<name>` | Table | &mdash; | Backend server entry. |
+| `servers.<name>.address` | String | &mdash; | Hostname or IP of the downstream backend server. |
+| `servers.<name>.port` | Integer | &mdash; | TCP port of the downstream backend server. |
 | `servers.<name>.forwarding_mode` | String | `"none"` | Forwarding strategy: `"velocity_modern"`, `"legacy_bungee"`, or `"none"`. |
-| `servers.<name>.forwarding_secret` | String | `""` | Shared secret string for `velocity_modern` HMAC calculation. |
+| `servers.<name>.forwarding_secret` | String | `""` | Shared secret key required when using `velocity_modern`. |
 
 ---
 
 ## 📜 Rhai Scripting Engine
 
-FrameMC embeds the [Rhai](https://rhai.rs/) scripting engine to allow customizing network routing, permissions, commands, and moderation without recompiling the proxy or relying on heavy JVM runtimes.
+Rather than pulling in an entire JVM runtime or requiring you to recompile the binary for simple routing adjustments, FrameMC embeds [Rhai](https://rhai.rs/). Scripts compile directly to AST in memory and run inside bounded execution sandboxes—meaning an unhandled exception or an accidental infinite loop in a script won't crash the proxy or stall Tokio threads.
 
 ### Event Hooks
 
-Scripts placed in `plugins/*.rhai` or `scripts/main.rhai` can implement any of the following hook functions:
+Scripts placed in `plugins/*.rhai` (or your main `scripts/main.rhai`) can hook into connection lifecycles by defining any of these functions:
 
 #### 1. `on_player_join(event)`
-Fired when a player completes authentication and is about to be routed to a backend server.
-- **Input `event` Map**:
-  - `event.player_name`: Player's Minecraft username (`String`)
-  - `event.uuid`: Player's UUID (`String`)
-  - `event.ip`: Client IP address (`String`)
-  - `event.protocol_version`: Handshake protocol version integer (`i64`)
-- **Return Value**: An object map:
+Fired after a player completes authentication, right before they are dispatched to a backend server.
+- **Event parameters**:
+  - `event.player_name`: Player username (`String`)
+  - `event.uuid`: UUID string (`String`)
+  - `event.ip`: Client remote IP address (`String`)
+  - `event.protocol_version`: Client protocol version number (`i64`)
+- **Return map**:
   ```rhai
   #{
-      allow: true,                 // Set false to disconnect the player
-      disconnect_reason: "",       // Kick message if allow is false
-      target_server: "lobby"       // Target server (empty string keeps default)
+      allow: true,                 // Return false to kick the player
+      disconnect_reason: "",       // Kick message shown if allow is false
+      target_server: "lobby"       // Target server name (leave empty for default)
   }
   ```
 
 #### 2. `on_player_command(event)`
-Fired when an in-game player executes a command.
-- **Input `event` Map**:
-  - `event.player_name`: Player's username (`String`)
+Fired whenever an active player issues a slash command in chat.
+- **Event parameters**:
+  - `event.player_name`: Player username (`String`)
   - `event.command`: Full command string including slash, e.g. `"/server hub"` (`String`)
-  - `event.current_server`: Server the player is currently connected to (`String`)
-- **Return Value**: An object map:
+  - `event.current_server`: Current backend name (`String`)
+- **Return map**:
   ```rhai
   #{
-      cancel: true,                // Set true to prevent forwarding to backend
-      reroute_server: "hub",       // Target server to transfer to (or "" for none)
-      send_message: "§aConnecting" // Message to send back to client (or "" for none)
+      cancel: true,                // True prevents the command from reaching backend
+      reroute_server: "hub",       // Target server to switch to (empty for none)
+      send_message: "§aConnecting" // Chat message sent back to player (empty for none)
   }
   ```
 
 #### 3. `on_tab_complete(event)`
-Fired when a player requests tab auto-completion for a command.
-- **Input `event` Map**:
-  - `event.player_name`: Player's username (`String`)
-  - `event.command`: Command prefix being typed (`String`)
-  - `event.current_server`: Server the player is currently connected to (`String`)
-- **Return Value**: An `Array` of suggestion strings:
+Fired when a player hits tab to auto-complete a command prefix.
+- **Event parameters**:
+  - `event.player_name`: Player username (`String`)
+  - `event.command`: Command string typed so far (`String`)
+  - `event.current_server`: Current backend name (`String`)
+- **Return array**: List of completion strings:
   ```rhai
   ["lobby", "survival", "creative"]
   ```
 
 ### Built-in Rhai Functions
 
-- `kv_set(key, value)`: Store a string value in thread-safe proxy memory.
-- `kv_get(key)`: Retrieve a stored string value (returns empty string if missing).
-- `kv_has(key)`: Check if a key exists in memory.
-- `kv_remove(key)`: Remove a key from memory.
-- `timestamp_sec()`: Current Unix timestamp in seconds.
-- `timestamp_ms()`: Current Unix timestamp in milliseconds.
-- `get_servers()`: Returns an array of configured backend server names.
-- `server_exists(name)`: Returns `true` if `name` is configured in `config.toml`.
-- `proxy_info(message)`: Log an informational message to the proxy console.
-- `proxy_warn(message)`: Log a warning to the proxy console.
-- `proxy_error(message)`: Log an error to the proxy console.
+- `kv_set(key, value)`: Stores a string in proxy memory (thread-safe).
+- `kv_get(key)`: Retrieves a string from proxy memory (returns `""` if missing).
+- `kv_has(key)`: Returns `true` if a key exists in memory.
+- `kv_remove(key)`: Deletes a key from memory.
+- `timestamp_sec()`: Current Unix epoch timestamp in seconds.
+- `timestamp_ms()`: Current Unix epoch timestamp in milliseconds.
+- `get_servers()`: Returns an array containing all configured backend server names.
+- `server_exists(name)`: Returns `true` if `name` matches a configured backend.
+- `proxy_info(message)`: Writes an info log to proxy stdout.
+- `proxy_warn(message)`: Writes a warning log to proxy stdout.
+- `proxy_error(message)`: Writes an error log to proxy stderr.
 
-### Tutorial: Server Switcher (`plugins/server_switcher.rhai`)
+### Example: Writing a Server Switcher (`plugins/server_switcher.rhai`)
+
+Here is how you implement `/server <target>`, `/lobby`, and dynamic tab completion in a few lines of Rhai:
 
 ```rhai
 // Intercept /server and /lobby commands
@@ -506,7 +528,7 @@ fn on_player_command(event) {
         };
     }
 
-    // Handle /lobby or /hub
+    // Handle /lobby or /hub shortcuts
     if cmd == "/lobby" || cmd == "/hub" {
         return #{
             cancel: true,
@@ -515,7 +537,7 @@ fn on_player_command(event) {
         };
     }
 
-    // Allow all other commands through to the backend
+    // Pass all other commands through to the backend server untouched
     #{ cancel: false, reroute_server: "", send_message: "" }
 }
 
@@ -541,15 +563,29 @@ fn on_tab_complete(event) {
 
 ---
 
+## ⚠️ Known Quirks & Gotchas
+
+Building a Minecraft proxy in Rust comes with a few trade-offs and protocol quirks to be aware of:
+
+- **Zero-copy means zero packet inspection during play**: Once a player enters the `Play` state and the socket is bridged with `tokio::io::copy_bidirectional`, FrameMC does not parse or inspect packets. If you need proxy-side packet rewrites (like adding custom entity glow effects or modifying inventory packets on the fly), that requires taking the socket out of raw splice mode.
+- **Velocity modern forwarding requires matching secrets**: If your Paper backend throws `Unable to verify player details`, double-check that `forwarding_secret` in `config.toml` matches `proxies.velocity.secret` in `paper-global.yml` exactly. A single mismatched character will cause HMAC validation to fail closed.
+- **1.20.2+ Configuration phase timing**: In modern Minecraft versions, server transfers replay configuration packets. If a downstream backend server takes too long to respond to the initial ping during a transfer, FrameMC's 5-second transfer timeout will trip to prevent hanging the player's connection, dropping them safely back to the fallback lobby instead of disconnecting them.
+- **Rhai is single-threaded per execution**: Rhai scripts execute synchronously within event callbacks. Don't write CPU-heavy numerical routines in Rhai—keep your scripts focused on command matching, string parsing, and routing decisions.
+
+---
+
 ## 🤝 Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for full architectural guidelines, development workflow, and PR standards.
+Pull requests are welcome. If you are adding protocol features, bug fixes, or new script hooks:
 
-Quick checklist before submitting a pull request:
-1. Ensure all 136 tests pass: `cargo test --all-targets`
-2. Ensure clippy passes with zero warnings: `cargo clippy --all-targets -- -D warnings`
-3. Ensure formatting is standard: `cargo fmt --check`
-4. Adhere to the core invariants: zero-copy play forwarding, strict async safety, and no custom VarInt parsing where crate utilities exist.
+1. **Keep the hot path zero-copy**: Avoid introducing packet deserialization or heap allocations during the `Play` state unless explicitly guarded by an opt-in hook.
+2. **Add unit tests**: New packet formats or state transitions should have corresponding test vectors matching Minecraft protocol specs.
+3. **Run the verification suite**:
+   ```bash
+   cargo test --all-targets
+   cargo clippy --all-targets -- -D warnings
+   cargo fmt --check
+   ```
 
 ---
 
