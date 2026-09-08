@@ -34,10 +34,12 @@ When contributing code to FrameMC, adhere to our core engineering invariants:
 
 ### Clone & Build
 ```bash
-git clone https://github.com/framemc/framemc.git
-cd framemc
-cargo build
+git clone https://github.com/djedenn/FrameMC.git
+cd FrameMC
+cargo build --release
 ```
+
+For detailed architecture notes and setup guides, refer to the [Documentation Suite](docs/GETTING_STARTED.md).
 
 ---
 

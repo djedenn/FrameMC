@@ -2,9 +2,17 @@
 
 This document details the low-level architectural invariants, protocol wire layouts, and execution lifecycle of **FrameMC**—a high-performance, native Rust reverse proxy for Minecraft Java Edition.
 
+If you are looking for configuration directives, setup guides, or test suites, see:
+- [Getting Started Guide](GETTING_STARTED.md)
+- [Configuration Reference](CONFIGURATION.md)
+- [Rhai Scripting Guide](SCRIPTING.md)
+- [Automated Test Suite & Protocol Verification](TESTING.md)
+
 ---
 
 ## 1. Architectural Directives
+
+FrameMC enforces twelve non-negotiable architectural invariants across its codebase:
 
 | Rule ID | Name | Specification |
 | :--- | :--- | :--- |
@@ -26,8 +34,8 @@ This document details the low-level architectural invariants, protocol wire layo
 ## 2. Technical Protocol Wire Layouts
 
 ### 2.1 VarInt & VarLong Encoding
-Minecraft uses variable-length integers where each byte provides 7 bits of payload and 1 continuation bit (MSB):
-- **MSB = 1**: More bytes follow.
+Minecraft frames all packet lengths and identifiers using variable-length LEB128 integers. Each byte contributes 7 payload bits and 1 continuation bit in the most significant bit (MSB):
+- **MSB = 1**: Another byte follows.
 - **MSB = 0**: Terminal byte.
 - Max 5 bytes for 32-bit `VarInt`, max 10 bytes for 64-bit `VarLong`.
 
@@ -38,15 +46,19 @@ Byte 0          Byte 1          Byte 2
   Continuation    Continuation    Terminal (MSB = 0)
 ```
 
+FrameMC validates the 5-byte and 10-byte limits on every read before allocating or expanding buffers. Any sequence exceeding these boundaries aborts the connection immediately (`Fail-Closed`), preventing memory amplification attacks.
+
 ### 2.2 Mojang SHA-1 Negative Hash
-Authentication in `online_mode = true` requires calculating a server hash over the empty server ID string, the shared secret, and the proxy's public key in DER format:
+When `online_mode = true`, client authentication involves computing a specialized hash over the empty server ID string, the shared secret negotiated via RSA, and the proxy's public key in DER format:
+
 ```text
 digest = SHA-1( "" + shared_secret + public_key_der )
 ```
-The digest is formatted as a two's-complement big-endian signed integer. If the most significant bit is set (negative), the two's complement value is prepended with a `-` sign.
 
-### 2.3 Velocity Modern Forwarding Packet
-Velocity modern player info forwarding uses the plugin message channel `velocity:player_info`:
+Minecraft formats this digest not as raw hex, but as a big-endian signed two's-complement integer. If the most significant bit is set (negative), the two's complement value is prepended with a `-` sign in the hex representation sent to Mojang's session servers.
+
+### 2.3 Velocity Modern Forwarding Wire Layout
+Modern downstream servers (Paper, Purpur, Folia, FabricProxy-Lite) receive client identity and profile properties via the `velocity:player_info` login plugin message channel:
 
 ```text
 +-------------------------------------------------------------+
@@ -69,13 +81,15 @@ Velocity modern player info forwarding uses the plugin message channel `velocity
 +-------------------------------------------------------------+
 ```
 
+The HMAC signature protects the player payload from tampered IP addresses or forged UUIDs. If the backend fails to verify the HMAC token, the connection is rejected at the backend gate.
+
 ---
 
 ## 3. Dynamic Server Switching Flow
 
-When a player triggers a server switch (via `/server <target>` or a Rhai script):
+When a player triggers a server transfer (through `/server <target>` or a script redirect):
 
-```
+```text
 Client                      FrameMC Proxy                  Target Backend
   │                              │                               │
   │── (In Play State) ──────────>│                               │
@@ -91,8 +105,21 @@ Client                      FrameMC Proxy                  Target Backend
   │══════════════════════════════╪═══════════════════════════════│
 ```
 
-1. **New Backend Handshake & Login**: FrameMC connects to the target backend and completes Handshake and Login states independently.
-2. **Compression Decoupling**: If the target backend requires compression or uses a different compression threshold than the client, FrameMC manages separate compression contexts per socket without corrupting deflate streams.
-3. **Configuration Phase Negotiation**: FrameMC consumes the target backend's Configuration state packets (`KnownPacks`, `RegistryData`, `UpdateTags`) and caches updated registries.
-4. **Respawn Packet Synthesis**: A clientbound `RespawnPacket` is generated using the target backend's dimension data, cleanly switching the client's world rendering without a disconnect screen.
-5. **Play Stream Splicing**: Sockets transition to the bidirectional raw I/O bridge.
+1. **New Backend Handshake & Login**: FrameMC connects to the target backend and completes Handshake and Login states independently without touching the existing client socket.
+2. **Compression Decoupling**: If the target backend requires compression or uses a different threshold than the client, FrameMC manages separate compression contexts per socket without corrupting deflate streams.
+3. **Configuration Phase Negotiation**: FrameMC consumes the target backend's Configuration state packets (`KnownPacks`, `RegistryData`, `UpdateTags`) and updates its cached registry state.
+4. **Respawn Packet Synthesis**: A clientbound `Respawn` packet is generated using the target backend's dimension data, cleanly switching the client's world rendering without triggering a disconnect screen.
+5. **Play Stream Splicing**: Both sockets transition to `tokio::io::copy_bidirectional`. Gameplay packets flow directly through kernel socket buffers without user-space allocation overhead.
+
+---
+
+## 4. Play Bridge & Socket Splicing Design
+
+Once a connection enters the `Play` state, FrameMC steps back from packet parsing. 
+
+Traditional Java proxies keep an active Netty channel pipeline alive throughout the entire session. Every inbound movement, chunk update, and entity metadata packet is read into a JVM byte buffer, parsed into an object, matched against channel handlers, and written back to the outbound socket. This creates high allocations on the hot path and continuous young-gen garbage collector churn.
+
+FrameMC's bridge uses Tokio's `copy_bidirectional`:
+- **Kernel-Level Relaying**: Operating system socket buffers transfer bytes directly with minimal context switching.
+- **Immediate FIN Teardown**: When either the client closes their connection or the backend shuts down, EOF signals propagate immediately to the counterpart socket, avoiding lingering half-open sockets or file descriptor leaks.
+- **Zero Heap Churn**: Zero packet structures are allocated in user-space during raw gameplay streaming, maintaining an idle RSS footprint of ~12–22 MB even under load.

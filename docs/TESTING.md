@@ -4,6 +4,12 @@ Every codec, state machine transition, and cryptographic routine in FrameMC is v
 
 Tests do not merely inspect mocked in-memory structures—they bind real loopback TCP sockets to validate raw byte-for-byte serialization, cipher state preservation, framing alignment, and error handling on the wire.
 
+For architecture details, setup steps, or configuration options, see:
+- [Architecture & Invariants](ARCHITECTURE.md)
+- [Getting Started Guide](GETTING_STARTED.md)
+- [Configuration Reference](CONFIGURATION.md)
+- [Rhai Scripting Guide](SCRIPTING.md)
+
 ---
 
 ## Test Execution Summary
