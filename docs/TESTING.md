@@ -181,7 +181,7 @@ Once players enter the Play state, FrameMC routes commands and switches servers 
 
 ## 6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)
 
-Scripts should never be able to freeze the Tokio reactor or chew through memory. We test the engine under hostile conditions: infinite loops terminated at 50,000 opcodes, recursion limits clamped at 32 frames, and exponential string builders rejected at 1,024 bytes. We also confirm that filesystem `import` statements are strictly blocked, test in-memory key-value primitives, and verify that all bundled `.rhai` plugins initialize cleanly.
+Scripts should never be able to freeze the Tokio reactor or chew through memory. We test the engine under hostile conditions: infinite loops terminated at 50,000 opcodes, recursion limits clamped at 32 frames, and exponential string builders rejected at 1,024 bytes. We also confirm that filesystem `import` statements are strictly blocked, test in-memory key-value primitives, and verify that the bundled `server_switcher.rhai` plugin initializes and routes cleanly.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -202,7 +202,7 @@ Scripts should never be able to freeze the Tokio reactor or chew through memory.
 | `test_server_switcher_tab_complete` | `script::events` | Dynamic tab completion matching configured backend server names | ✅ Passed |
 | `test_default_fallback_when_hooks_missing` | `script::events` | Safe defaults when scripts omit hook function definitions | ✅ Passed |
 | `test_plugin_security_and_edge_cases` | `script::events` | Malformed events, non-map return types, and script error isolation | ✅ Passed |
-| `test_all_20_popular_bungee_plugins_load_and_run` | `script::events` | Validates all bundled BungeeCord-equivalent Rhai plugins | ✅ Passed |
+| `test_server_switcher_plugin_loading_and_runtime` | `script::events` | Validates directory-loaded server switcher plugin lifecycle & commands | ✅ Passed |
 
 ---
 

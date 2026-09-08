@@ -16,7 +16,7 @@
 </div>
 
 > [!WARNING]
-> **Early Development Phase**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). While core protocol handshakes, state machines, and cryptographic routines pass our 136 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
+> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 136 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
 
 ---
 

@@ -68,7 +68,7 @@ Startup logs look like this:
 
 ```text
 2026-09-08T14:20:00Z  INFO framemc: Starting FrameMC Minecraft Proxy using config: config.toml
-2026-09-08T14:20:00Z  INFO framemc: Loaded 21 plugin(s) from 'plugins'
+2026-09-08T14:20:00Z  INFO framemc: Loaded 1 plugin(s) from 'plugins'
 2026-09-08T14:20:00Z  INFO framemc: Loaded script at 'scripts/main.rhai'
 2026-09-08T14:20:00Z  INFO framemc::network::listener: FrameMC listener bound to 0.0.0.0:25565 (online_mode: true)
 ```
