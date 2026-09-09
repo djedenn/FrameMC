@@ -18,11 +18,12 @@ FrameMC embeds [Rhai](https://rhai.rs/), a native Rust scripting language. Scrip
   - [Server Queries](#server-queries)
   - [Logging](#console-logging)
 - [Rhai Syntax Gotchas](#rhai-syntax-gotchas)
-- [Practical Script Recipes](#practical-script-examples)
-  - [1. Server Switcher (`/server`, `/hub`)](#example-1-robust-server-switcher-pluginsserver_switcherrhai)
-  - [2. Maintenance Mode with Whitelist](#example-2-maintenance-mode-with-admin-whitelist-pluginsmaintenancerhai)
-  - [3. Anti-Spam Command Cooldowns](#example-3-command-cooldowns--spam-protection-pluginsrate_limitrhai)
-  - [4. Version-Based Server Routing](#example-4-version-based-dynamic-routing-pluginsversion_routingrhai)
+- [Practical Script Recipes](#practical-script-recipes)
+  - [1. Server Switcher (/server, /hub)](#1-server-switcher-server-hub)
+  - [2. Maintenance Mode with Admin Whitelist](#2-maintenance-mode-with-admin-whitelist)
+  - [3. Anti-Spam Command Cooldowns](#3-anti-spam-command-cooldowns)
+  - [4. Version-Based Dynamic Routing](#4-version-based-dynamic-routing)
+- [Practical Tips for Rhai Scripts](#practical-tips-for-rhai-scripts)
 
 ---
 
@@ -232,9 +233,9 @@ If you are coming from JavaScript, Python, or Java, watch out for these subtle d
 
 ---
 
-## Practical Script Examples
+## Practical Script Recipes
 
-### Example 1: Robust Server Switcher (`plugins/server_switcher.rhai`)
+### 1. Server Switcher (/server, /hub)
 
 Handles `/server <target>`, `/hub`, `/lobby`, and dynamic tab completion:
 
@@ -272,8 +273,19 @@ fn on_player_command(event) {
 
     // List servers on plain /server
     if cmd == "/server" {
-        let list = get_servers();
-        let msg = "§6Configured servers: §f" + list.to_string();
+        let servers = get_servers();
+        let list_str = "";
+        let i = 0;
+        while i < servers.len {
+            if i > 0 { list_str += "§7, "; }
+            if servers[i] == event.current_server {
+                list_str += "§a" + servers[i] + "§6*";
+            } else {
+                list_str += "§b" + servers[i];
+            }
+            i += 1;
+        }
+        let msg = "§6[FrameMC] §eCurrent: §a" + event.current_server + "\n§6[FrameMC] §eServers: " + list_str;
         return #{
             cancel: true,
             reroute_server: "",
@@ -321,7 +333,7 @@ fn on_tab_complete(event) {
 
 ---
 
-### Example 2: Maintenance Mode with Admin Whitelist (`plugins/maintenance.rhai`)
+### 2. Maintenance Mode with Admin Whitelist
 
 Toggle maintenance with `/maintenance on` and `/maintenance off`, allowing only whitelisted admins through:
 
@@ -378,7 +390,7 @@ fn on_player_command(event) {
 
 ---
 
-### Example 3: Command Cooldowns / Spam Protection (`plugins/rate_limit.rhai`)
+### 3. Anti-Spam Command Cooldowns
 
 Prevents players from spamming heavy proxy commands using timestamps and the in-memory key-value store:
 
@@ -411,7 +423,7 @@ fn on_player_command(event) {
 
 ---
 
-### Example 4: Version-Based Dynamic Routing (`plugins/version_routing.rhai`)
+### 4. Version-Based Dynamic Routing
 
 Direct players to specific backends based on their Minecraft protocol version:
 

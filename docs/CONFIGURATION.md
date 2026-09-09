@@ -5,20 +5,20 @@ FrameMC stores all its settings in a single `config.toml` file in the working di
 If no configuration file exists when the binary starts, FrameMC generates a working starter configuration bound to `0.0.0.0:25565`.
 
 ## Table of Contents
-- [Complete `config.toml` Example](#complete-configtoml-example)
+- [Complete config.toml Example](#complete-configtoml-example)
 - [Configuration Keys Reference](#configuration-keys-reference)
   - [Top-Level Directives](#top-level-directives)
-  - [Backend Definitions](#backend-definitions-serversname)
+  - [Backend Definitions ([servers.<name>])](#backend-definitions-serversname)
 - [Forwarding Mode Selection Matrix](#forwarding-mode-selection-matrix)
 - [Routing Mechanics & Failover](#routing-mechanics--failover)
 - [Compression Decoupling & Tuning](#compression-decoupling--tuning)
 - [Connection Timeouts](#connection-timeouts)
 - [Backend Configuration Examples](#backend-configuration-examples)
-  - [Paper / Purpur / Folia (Velocity Modern)](#1-paper--purpur--folia-modern-velocity-forwarding)
-  - [Spigot / CraftBukkit (Legacy Bungee)](#2-spigot--craftbukkit-legacy-bungeecord-forwarding)
-  - [Fabric / Quilt (Modded)](#3-fabric--quilt-modded-backends)
-  - [SteelMC (Native Rust)](#4-steelmc-native-rust-backend)
-  - [Vanilla Mojang Dedicated Server](#5-vanilla-mojang-dedicated-server)
+  - [1. Paper / Purpur / Folia (Velocity Modern)](#1-paper--purpur--folia-velocity-modern)
+  - [2. Spigot / CraftBukkit (Legacy Bungee)](#2-spigot--craftbukkit-legacy-bungee)
+  - [3. Fabric / Quilt (Modded)](#3-fabric--quilt-modded)
+  - [4. SteelMC (Native Rust)](#4-steelmc-native-rust)
+  - [5. Vanilla Mojang Dedicated Server](#5-vanilla-mojang-dedicated-server)
 
 ---
 
@@ -137,7 +137,7 @@ forwarding_mode = "none"
 | `plugins_dir` | String | `"plugins"` | Directory scanned for modular `.rhai` script plugins. Automatically created if missing. |
 | `script_path` | String | `"scripts/main.rhai"` | Path to the main event script executed on joins, commands, and tab completions. |
 
-### Backend Definitions (`[servers.<name>]`)
+### Backend Definitions ([servers.<name>])
 
 Each downstream server is configured under a `[servers.<name>]` table header. The table key (`<name>`) becomes the identifier used in `/server <name>`, Rhai routing hooks, and proxy logs.
 
@@ -229,7 +229,7 @@ FrameMC enforces deterministic timeouts across the connection lifecycle to preve
 
 ## Backend Configuration Examples
 
-### 1. Paper / Purpur / Folia (Modern Velocity Forwarding)
+### 1. Paper / Purpur / Folia (Velocity Modern)
 
 Velocity modern forwarding is the recommended forwarding strategy. It transfers real player UUIDs, skins, textures, and client IP addresses wrapped in an HMAC-SHA256 signature, preventing IP spoofing without modifying the handshake host string.
 
@@ -261,7 +261,7 @@ server-port=25568
 
 ---
 
-### 2. Spigot / CraftBukkit (Legacy BungeeCord Forwarding)
+### 2. Spigot / CraftBukkit (Legacy Bungee)
 
 For legacy Spigot servers that do not support plugin-message player forwarding:
 
@@ -293,7 +293,7 @@ Spigot parses this null-delimited string to assign the player their authentic UU
 
 ---
 
-### 3. Fabric / Quilt (Modded Backends)
+### 3. Fabric / Quilt (Modded)
 
 Fabric servers do not include proxy forwarding in vanilla code. Install the lightweight [FabricProxy-Lite](https://modrinth.com/mod/fabricproxy-lite) mod to add Velocity modern forwarding support.
 
@@ -320,7 +320,7 @@ server-port=25571
 
 ---
 
-### 4. SteelMC (Native Rust Backend)
+### 4. SteelMC (Native Rust)
 
 Pairing FrameMC with SteelMC creates an end-to-end Rust Minecraft infrastructure with zero JVM garbage collection on either side:
 

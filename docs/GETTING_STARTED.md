@@ -2,6 +2,21 @@
 
 Getting FrameMC running takes about two minutes. Because it compiles to a standalone native binary, there's no Java installation to worry about, no classpath arguments to pass, and no tuning JVM garbage collectors before you start.
 
+## Table of Contents
+- [System Requirements](#system-requirements)
+- [Building from Source](#building-from-source)
+- [First Run & Bootstrapping](#first-run--bootstrapping)
+- [CLI Options & Flags](#cli-options--flags)
+- [Connecting Your First Backend](#connecting-your-first-backend)
+  - [Recommended Port Layout](#recommended-port-layout)
+  - [Step-by-Step Paper Setup (Velocity Modern)](#step-by-step-paper-setup-velocity-modern-forwarding)
+- [Production Deployment](#production-deployment)
+  - [1. Systemd Service](#1-systemd-service-etcsystemdsystemframemcservice)
+  - [2. File Descriptor Limits (ulimit)](#2-file-descriptor-limits-ulimit)
+- [Troubleshooting Initial Setup](#troubleshooting-initial-setup)
+- [Quick Diagnostic Commands](#quick-diagnostic-commands)
+- [Next Steps](#next-steps)
+
 ---
 
 ## System Requirements
@@ -131,9 +146,17 @@ A proxy needs at least one downstream Minecraft server to send players to. **Do 
 
 Here is how to connect a local Paper server running on port `25568`:
 
-1. Open `config.toml` in your FrameMC directory:
+1. In your `config.toml` (auto-generated on first launch), update `default_server` and add the backend definition:
+
 ```toml
+bind_address = "0.0.0.0"
+bind_port = 25565
+motd = "§aFrameMC §7High-Performance Minecraft Proxy"
+max_players = 1000
+online_mode = true
 default_server = "paper"
+script_path = "scripts/main.rhai"
+plugins_dir = "plugins"
 
 [servers.paper]
 address = "127.0.0.1"
@@ -250,10 +273,36 @@ When `online_mode = true`, FrameMC reaches out to Mojang's session servers (`ses
 - Run `curl -I https://sessionserver.mojang.com` on the host to verify connectivity.
 - If you are developing locally without an active internet connection, set `online_mode = false` in `config.toml`.
 
+### Protocol Version Mismatch (`Outdated server` or `Outdated client`)
+FrameMC supports Minecraft Java Edition protocols 764 through 776+ (versions 1.20.4 to 1.21.4+).
+- If a player connects with an older version (e.g. 1.16.5 or 1.12.2), FrameMC terminates the handshake to avoid protocol framing desynchronization.
+- For mixed legacy networks, place a protocol translation layer (like ViaVersion / ViaProxy) either upstream or on your backend servers.
+
+### Linux: `Permission denied (os error 13)` on Privileged Ports (<1024)
+If you configure `bind_port` below 1024 (e.g. port 80 or 443) and run FrameMC as a non-root system user, the Linux kernel rejects the bind syscall.
+- Grant socket bind capabilities directly to the binary:
+  ```bash
+  sudo setcap 'cap_net_bind_service=+ep' /opt/framemc/framemc
+  ```
+- Or keep FrameMC on port 25565 and let an edge firewall/HAProxy handle port 80/443 redirection.
+
 ### Players kicked when switching backends mid-game
 If world transfers fail between two running servers:
 - Check backend response times: If the target server takes longer than 5 seconds to reply during the Configuration handshake (often caused by main-thread stall during heavy chunk generation), FrameMC cancels the transfer to keep the client connection from freezing.
 - Verify compression consistency: While FrameMC handles decoupled compression translation automatically, verify that backend servers aren't rejecting custom plugin channels sent by downstream mods.
+
+---
+
+## Quick Diagnostic Commands
+
+| Diagnostic Task | Linux Command | Windows PowerShell Command |
+| :--- | :--- | :--- |
+| **Check listening port** | `ss -tulpn \| grep 25565` | `netstat -ano \| findstr 25565` |
+| **Find process by port** | `lsof -i :25565` | `Get-Process -Id (Get-NetTCPConnection -LocalPort 25565).OwningProcess` |
+| **Kill stuck process** | `kill -9 <PID>` | `taskkill /PID <PID> /F` |
+| **Test Mojang auth API** | `curl -I https://sessionserver.mojang.com` | `curl.exe -I https://sessionserver.mojang.com` |
+| **Follow live logs** | `journalctl -u framemc -f` | `Get-Content framemc.log -Wait -Tail 50` |
+| **Run with trace logs** | `RUST_LOG=trace ./framemc` | `$env:RUST_LOG="trace"; .\framemc.exe` |
 
 ---
 
@@ -262,3 +311,5 @@ If world transfers fail between two running servers:
 - Explore every configuration key in the [Configuration Reference](CONFIGURATION.md).
 - Write custom commands, permissions, and maintenance logic in [Scripting with Rhai](SCRIPTING.md).
 - Inspect low-level packet framing and state transitions in [Architecture Specification](ARCHITECTURE.md).
+- Review wire-level test coverage in [Testing Reference](TESTING.md).
+

@@ -16,23 +16,23 @@
 </div>
 
 > [!WARNING]
-> **Early Development (`v0.1.0-alpha`)**: FrameMC is under active development. Core protocol handshakes, modern configuration negotiation, cryptographic routines, and routing state machines pass all 136 automated test cases. However, this is experimental software. Test thoroughly in staging before routing production traffic through it. Breaking changes may occur between releases.
+> **Early Development (`v0.1.0-alpha`)**: FrameMC is in active alpha. All 136 wire-level protocol, cryptography, and routing tests pass cleanly, but this is experimental software. Always test thoroughly in a staging environment before routing real player traffic through it. Config keys and internal APIs may evolve between releases.
 
 ---
 
 ### The Problem with JVM Proxies
 
-Most Minecraft proxies run on the JVM and rely on Netty pipelines. Velocity fixed BungeeCord's threading bottlenecks years ago, and for standard setups it gets the job done. But running a proxy on Java still comes with fundamental operational baggage:
+Most Minecraft proxies run on the JVM and rely on Netty pipelines. Velocity solved BungeeCord's threading bottlenecks years ago, and for typical setups it gets the job done. But running an edge proxy on Java still brings fundamental operational friction:
 
-- **Garbage Collection Spikes**: When a minigame lobby dumps hundreds of players into a hub at once, allocating packet objects across active sessions hammers young-gen GC. Even with modern collectors like ZGC or Shenandoah, you get tail latency spikes and scheduling jitter right when you need smooth throughput.
-- **Unnecessary Serialization**: Traditional proxies deserialize, parse, wrap, and re-encode every single packet moving between client and server. But reverse proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket wastes massive amounts of CPU cycles.
+- **Garbage Collection Spikes**: When a minigame lobby dumps hundreds of players into a hub simultaneously, allocating packet objects across active sessions hammers young-gen GC. Even modern collectors like ZGC or Shenandoah produce tail latency spikes and scheduling jitter right when you need steady throughput.
+- **Unnecessary Serialization**: Traditional proxies deserialize, parse, wrap, and re-encode every single packet moving between client and server. Reverse proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket burns CPU cycles pointlessly.
 - **Heavy Resource Footprint**: An idle Velocity instance with a couple of plugins easily consumes 500 MB to 1 GB of memory. If you run multiple edge proxies across different regions or host lightweight staging nodes, that memory overhead adds up fast.
 
 ### The FrameMC Approach
 
 FrameMC takes a simpler, more pragmatic route:
 
-1. **Do the handshake work**: Authenticate the client with Mojang (or offline UUID v3), negotiate the modern 1.20.2+ `Configuration` registry handshake, and verify backend forwarding tokens.
+1. **Do the handshake work**: Authenticate the client with Mojang (or derive offline UUID v3), negotiate the modern 1.20.2+ `Configuration` registry handshake, and verify backend forwarding tokens.
 2. **Step out of the data path**: Once the session transitions into the `Play` state, Tokio bridges the raw TCP streams directly using `tokio::io::copy_bidirectional`. Packets move straight through kernel socket buffers without user-space buffer allocations or heap churn.
 
 The result is **~15 MB RSS**, sub-15ms cold boot times, and zero GC pauses.
@@ -68,7 +68,7 @@ flowchart TD
 ```
 
 How it works under the hood:
-- **Zero-copy relaying**: During gameplay, user-space doesn't touch the packets. We measure 480,000+ packets/sec throughput because the proxy isn't re-serializing entity motions.
+- **Zero-copy relaying**: During gameplay, user-space code never touches the packets. We measure 480,000+ packets/sec throughput because the proxy isn't re-serializing entity motions.
 - **Decoupled compression**: Backend A might run `network-compression-threshold = 256` while Backend B runs with compression off (`-1`). FrameMC tracks client and server compression states independently, converting zlib framing on the fly when switching servers.
 - **Registry & dimension caching**: Minecraft 1.20.2+ split the handshake into a dedicated Configuration phase. FrameMC intercepts dimension types and biomes on join, allowing it to synthesize a valid clientbound `Respawn` packet during mid-game transfers without kicking the player back to the loading dirt screen.
 - **Rhai scripting sandbox**: Embedded native Rust scripting ([Rhai](https://rhai.rs/)) replaces heavy JVM plugin JARs. Scripts run with hard ceilings: 50,000 opcodes max, recursion clamped at 32 frames, and 1 KB string caps. A buggy script can't freeze the Tokio reactor or chew through memory.
@@ -87,7 +87,7 @@ Tested on an 8-core AMD Ryzen 9 running Linux 6.8 and Windows 11 with 500 simula
 | **Warm Process Startup** | 4,200 – 7,500 ms | 1,400 – 2,800 ms | **< 12 ms** |
 | **GC Pauses / Jitter** | 10 – 150 ms (Stop-the-world) | 2 – 25 ms (ZGC/G1) | **0.00 ms (Zero GC, Deterministic)** |
 | **Forwarding Throughput** | ~95,000 packets/sec | ~185,000 packets/sec | **~480,000+ packets/sec (Zero-copy I/O)** |
-| **Play State Relaying** | Netty decode $\rightarrow$ encode | Pipeline buffer copies | **Kernel-assisted socket splicing** |
+| **Play State Relaying** | Netty decode → encode | Pipeline buffer copies | **Kernel-assisted socket splicing** |
 | **Server Transfer Speed** | 80 – 250 ms | 40 – 120 ms | **< 15 ms** |
 | **Forwarding Protocols** | Null-byte host appending | Velocity HMAC-SHA256 | **Velocity Modern + Legacy Bungee** |
 | **Configuration Format** | YAML | TOML | **Strict TOML (`config.toml`)** |
@@ -151,6 +151,9 @@ address = "127.0.0.1"
 port = 25566
 forwarding_mode = "none"
 ```
+
+### 5. Connect Your Client
+Launch Minecraft Java Edition (1.20.4 through 1.21.4+) and connect to `127.0.0.1:25565`. FrameMC handles authentication and relays you into the configured backend.
 
 ---
 

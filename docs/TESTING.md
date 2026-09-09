@@ -41,6 +41,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ## Developer Test Commands
 
+### Bash (Linux / macOS):
 ```bash
 # Run all 136 tests
 cargo test --all-targets
@@ -56,6 +57,21 @@ cargo test --test '*'
 
 # Run with debug tracing enabled for network inspection
 RUST_LOG=framemc=debug cargo test test_full_status_ping_flow_over_tcp -- --nocapture
+```
+
+### PowerShell (Windows):
+```powershell
+# Run all 136 tests
+cargo test --all-targets
+
+# Run tests with verbose output
+cargo test --all-targets -- --nocapture
+
+# Run a specific test by name filter
+cargo test test_mojang_sha1_known_vectors
+
+# Run with debug tracing enabled
+$env:RUST_LOG="framemc=debug"; cargo test test_full_status_ping_flow_over_tcp -- --nocapture
 ```
 
 ---

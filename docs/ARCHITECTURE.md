@@ -3,19 +3,19 @@
 This document details the low-level architectural invariants, protocol wire layouts, and execution lifecycle of **FrameMC**—a high-performance, native Rust reverse proxy for Minecraft Java Edition.
 
 ## Table of Contents
-- [1. Core Architectural Invariants [R-01] to [R-12]](#1-architectural-directives)
+- [1. Architectural Invariants [R-01] to [R-12]](#1-architectural-invariants-r-01-to-r-12)
 - [2. Minecraft Protocol State Machine](#2-protocol-state-machine)
-- [3. Wire Layouts & Technical Codecs](#3-technical-protocol-wire-layouts)
-  - [3.1 VarInt & VarLong LEB128](#31-varint--varlong-encoding)
-  - [3.2 Mojang SHA-1 Two's-Complement Hex](#32-mojang-sha-1-negative-hash)
-  - [3.3 Velocity Modern Forwarding Layout](#33-velocity-modern-forwarding-wire-layout)
-- [4. Dynamic Server Switching & Dimension Caching](#4-dynamic-server-switching-flow)
+- [3. Wire Layouts & Technical Codecs](#3-wire-layouts--technical-codecs)
+  - [3.1 VarInt & VarLong Encoding](#31-varint--varlong-encoding)
+  - [3.2 Mojang SHA-1 Two's-Complement Hash](#32-mojang-sha-1-twos-complement-hash)
+  - [3.3 Velocity Modern Forwarding Wire Layout](#33-velocity-modern-forwarding-wire-layout)
+- [4. Dynamic Server Switching Flow](#4-dynamic-server-switching-flow)
 - [5. Brigadier Command Tree Injection](#5-brigadier-command-tree-injection)
-- [6. Play Bridge & Zero-Copy Socket Splicing](#6-play-bridge--socket-splicing-design)
+- [6. Play Bridge & Zero-Copy Socket Splicing](#6-play-bridge--zero-copy-socket-splicing)
 
 ---
 
-## 1. Architectural Directives
+## 1. Architectural Invariants [R-01] to [R-12]
 
 FrameMC enforces twelve non-negotiable architectural invariants across its codebase:
 
@@ -94,9 +94,9 @@ Minecraft Java Edition handshakes progress through a strictly ordered sequence o
 
 ---
 
-## 3. Technical Protocol Wire Layouts
+## 3. Wire Layouts & Technical Codecs
 
-### 2.1 VarInt & VarLong Encoding
+### 3.1 VarInt & VarLong Encoding
 Minecraft frames all packet lengths and identifiers using variable-length LEB128 integers. Each byte contributes 7 payload bits and 1 continuation bit in the most significant bit (MSB):
 - **MSB = 1**: Another byte follows.
 - **MSB = 0**: Terminal byte.
@@ -111,7 +111,7 @@ Byte 0          Byte 1          Byte 2
 
 Because an unconstrained VarInt reader could consume unbounded memory if a hostile client keeps streaming bytes with the MSB set, FrameMC validates the 5-byte and 10-byte ceilings on every read before allocating or expanding buffers. Any sequence exceeding these limits terminates the connection immediately (`Fail-Closed`).
 
-### 2.2 Mojang SHA-1 Negative Hash
+### 3.2 Mojang SHA-1 Two's-Complement Hash
 When `online_mode = true`, client authentication requires calculating a specialized hash over the empty server ID string, the shared secret negotiated via RSA, and the proxy's public key in DER format:
 
 ```text
@@ -120,7 +120,7 @@ digest = SHA-1( "" + shared_secret + public_key_der )
 
 Minecraft formats this digest not as standard raw hex, but as a big-endian signed two's-complement integer (an idiosyncratic artifact of Java's `BigInteger(byte[]).toString(16)`). If the most significant bit is set (negative), the two's-complement value is prepended with a `-` sign in the hex string sent to Mojang's session servers.
 
-### 2.3 Velocity Modern Forwarding Wire Layout
+### 3.3 Velocity Modern Forwarding Wire Layout
 Modern downstream servers (Paper, Purpur, Folia, FabricProxy-Lite) receive client identity and profile properties via the `velocity:player_info` login plugin message channel:
 
 ```text
@@ -191,7 +191,7 @@ If a proxy doesn't inject its own commands into this tree, the client's chat fie
 
 ---
 
-## 6. Play Bridge & Socket Splicing Design
+## 6. Play Bridge & Zero-Copy Socket Splicing
 
 Once a connection enters the `Play` state, FrameMC steps back from packet parsing. 
 
