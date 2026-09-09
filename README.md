@@ -16,7 +16,7 @@
 </div>
 
 > [!WARNING]
-> **Early Development (`v0.1.0-alpha`)**: FrameMC is in active alpha. All 136 wire-level protocol, cryptography, and routing tests pass cleanly, but this is experimental software. Always test thoroughly in a staging environment before routing real player traffic through it. Config keys and internal APIs may evolve between releases.
+> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 136 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
 
 ---
 
