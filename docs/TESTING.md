@@ -20,7 +20,7 @@ For architecture details, setup steps, or configuration options, see:
 - [5. Play State Machine, Server Switching & Bridge (30 Tests)](#5-play-state-machine-server-switching--bridge-30-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
 - [7. Configuration, Network Listener & Integration Tests (20 Tests)](#7-configuration-network-listener--integration-tests-20-tests)
-- [8. Command-Line Interface & Application Lifecycle (5 Tests)](#8-command-line-interface--application-lifecycle-5-tests)
+- [8. Command-Line Interface & Application Lifecycle (6 Tests)](#8-command-line-interface--application-lifecycle-6-tests)
 
 ---
 
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   138
-Passed:                   138
+Total Test Invocations:   139
+Passed:                   139
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -43,7 +43,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ### Bash (Linux / macOS):
 ```bash
-# Run all 138 tests
+# Run all 139 tests
 cargo test --all-targets
 
 # Run tests with real-time names and stdout/stderr output
@@ -272,7 +272,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 
 ---
 
-## 8. Command-Line Interface & Application Lifecycle (5 Tests)
+## 8. Command-Line Interface & Application Lifecycle (6 Tests)
 
 Verifies CLI argument handling for configuration overrides (`-c` and `--config`), version flags (`-V`, `--version`), help text output, and clean error exit codes when unrecognized flags or missing file paths are passed.
 
@@ -283,3 +283,4 @@ Verifies CLI argument handling for configuration overrides (`-c` and `--config`)
 | `test_cli_args_version_and_help` | `main` | Clean short and long version (`-v`, `-V`, `--version`) and help (`-h`, `--help`) triggers | ✅ Passed |
 | `test_cli_args_errors` | `main` | Rejection of missing configuration values and unrecognized CLI options | ✅ Passed |
 | `test_shutdown_channel_broadcast` | `main` | Asynchronous watch broadcast for graceful termination across all runtime tasks | ✅ Passed |
+| `test_wait_for_shutdown_signal_does_not_prematurely_trigger` | `main` | OS signal listener remains active without premature termination until actual signal arrival | ✅ Passed |

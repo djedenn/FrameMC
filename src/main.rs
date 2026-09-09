@@ -133,58 +133,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn wait_for_shutdown_signal() {
     use tokio::signal::unix::{signal, SignalKind};
 
-    let mut sigint = match signal(SignalKind::interrupt()) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("Failed to install SIGINT handler: {e}");
-            return;
-        }
-    };
-    let mut sigterm = match signal(SignalKind::terminate()) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("Failed to install SIGTERM handler: {e}");
-            return;
-        }
-    };
+    let sigint = signal(SignalKind::interrupt());
+    let sigterm = signal(SignalKind::terminate());
 
-    tokio::select! {
-        _ = sigint.recv() => {
+    match (sigint, sigterm) {
+        (Ok(mut int), Ok(mut term)) => {
+            tokio::select! {
+                _ = int.recv() => {
+                    tracing::info!(
+                        "OS shutdown signal (SIGINT / Ctrl-C) received, initiating graceful termination..."
+                    );
+                }
+                _ = term.recv() => {
+                    tracing::info!(
+                        "OS shutdown signal (SIGTERM) received, initiating graceful termination..."
+                    );
+                }
+            }
+        }
+        (Ok(mut int), Err(e)) => {
+            tracing::warn!("Failed to install SIGTERM handler ({e}), falling back to SIGINT only");
+            int.recv().await;
             tracing::info!(
                 "OS shutdown signal (SIGINT / Ctrl-C) received, initiating graceful termination..."
             );
         }
-        _ = sigterm.recv() => {
+        (Err(e), Ok(mut term)) => {
+            tracing::warn!("Failed to install SIGINT handler ({e}), falling back to SIGTERM only");
+            term.recv().await;
             tracing::info!(
                 "OS shutdown signal (SIGTERM) received, initiating graceful termination..."
             );
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::error!(
+                "Failed to install both SIGINT ({e1}) and SIGTERM ({e2}) handlers; running without OS signal listener"
+            );
+            std::future::pending::<()>().await;
         }
     }
 }
 
 #[cfg(windows)]
 async fn wait_for_shutdown_signal() {
-    match tokio::signal::ctrl_c().await {
-        Ok(()) => {
-            tracing::info!(
-                "OS shutdown signal (Ctrl-C) received, initiating graceful termination..."
-            );
-        }
-        Err(e) => {
-            tracing::error!("Failed to listen for Ctrl-C shutdown signal: {e}");
-        }
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!(
+            "Failed to listen for Ctrl-C shutdown signal ({e}); proxy will run without console shutdown signal handler"
+        );
+        std::future::pending::<()>().await;
+    } else {
+        tracing::info!("OS shutdown signal (Ctrl-C) received, initiating graceful termination...");
     }
 }
 
 #[cfg(not(any(unix, windows)))]
 async fn wait_for_shutdown_signal() {
-    match tokio::signal::ctrl_c().await {
-        Ok(()) => {
-            tracing::info!("OS shutdown signal received, initiating graceful termination...");
-        }
-        Err(e) => {
-            tracing::error!("Failed to listen for shutdown signal: {e}");
-        }
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!(
+            "Failed to listen for shutdown signal ({e}); proxy will run without signal handler"
+        );
+        std::future::pending::<()>().await;
+    } else {
+        tracing::info!("OS shutdown signal received, initiating graceful termination...");
     }
 }
 
@@ -258,5 +268,18 @@ mod tests {
         assert!(!*shutdown_rx.borrow());
         let _ = shutdown_tx.send(true);
         assert!(*shutdown_rx.borrow());
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_shutdown_signal_does_not_prematurely_trigger() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            wait_for_shutdown_signal(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "wait_for_shutdown_signal must not complete prematurely without receiving an actual signal"
+        );
     }
 }
