@@ -148,7 +148,7 @@ The compiled executable lands at `target/release/framemc` (or `framemc.exe` on W
 ```bash
 cargo test --all-targets
 ```
-All 136 unit and integration tests should pass.
+All 139 unit and integration tests should pass.
 
 ### 4. Run FrameMC
 ```bash
