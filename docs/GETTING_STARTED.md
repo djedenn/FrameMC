@@ -232,7 +232,45 @@ Check live logs:
 journalctl -u framemc -f
 ```
 
-### 2. File Descriptor Limits (`ulimit`)
+> **Note on Graceful Shutdown**: FrameMC handles POSIX `SIGTERM` and `SIGINT` natively via Tokio's Unix signal subsystem. When `systemctl stop framemc`, `docker stop`, or Kubernetes container termination initiates, the proxy immediately stops accepting new connections, flushes active in-flight packets, and cleanly terminates downstream sessions without abrupt connection drops.
+
+### 2. macOS Deployment (`launchd` daemon)
+
+On macOS servers, FrameMC can be managed as a native `launchd` daemon:
+
+Create `/Library/LaunchDaemons/com.framemc.proxy.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.framemc.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/framemc</string>
+        <string>-c</string>
+        <string>/etc/framemc/config.toml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/var/log/framemc.err.log</string>
+    <key>StandardOutPath</key>
+    <string>/var/log/framemc.out.log</string>
+</dict>
+</plist>
+```
+
+Load and start the service:
+```bash
+sudo launchctl load -w /Library/LaunchDaemons/com.framemc.proxy.plist
+```
+When `launchctl stop` or `launchctl unload` is executed, macOS sends `SIGTERM`, triggering clean proxy termination.
+
+### 3. File Descriptor Limits (`ulimit`)
 Each active client connection and backend connection consumes a TCP socket (file descriptor). Ensure your host limits allow scaling:
 
 ```bash
@@ -242,7 +280,7 @@ ulimit -n
 # Set temporary limit in current shell
 ulimit -n 65536
 ```
-In `systemd`, `LimitNOFILE=65536` takes care of this automatically.
+In `systemd`, `LimitNOFILE=65536` takes care of this automatically. On macOS, configure `kern.maxfiles` via `/etc/sysctl.conf` or `launchd`.
 
 ---
 

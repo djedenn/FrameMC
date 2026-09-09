@@ -460,4 +460,22 @@ pub mod tests {
         let _ = std::fs::remove_file(icon_path);
         let _ = std::fs::remove_dir(temp_dir);
     }
+
+    #[test]
+    fn test_load_or_create_nested_subdirectory_cross_platform() {
+        let temp_dir = std::env::temp_dir();
+        let unique_folder = format!("framemc_nested_{}", rand::random::<u32>());
+        let nested_dir = temp_dir.join(unique_folder).join("nested_sub");
+        let nested_config_path = nested_dir.join("proxy_conf.toml");
+        let path_str = nested_config_path.to_str().unwrap();
+
+        assert!(!nested_config_path.exists());
+        let config =
+            ProxyConfig::load_or_create(path_str).expect("Failed to load_or_create nested");
+        assert!(nested_config_path.exists());
+        assert_eq!(config.default_server, "lobby");
+
+        let _ = std::fs::remove_file(&nested_config_path);
+        let _ = std::fs::remove_dir_all(nested_dir.parent().unwrap());
+    }
 }

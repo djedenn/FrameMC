@@ -12,44 +12,61 @@ env:
 
 jobs:
   test:
-    name: Test & Build (${{ matrix.os }})
+    name: Test & Build (${{ matrix.artifact_name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: framemc-linux-x86_64
+            binary_name: framemc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: framemc-windows-x86_64
+            binary_name: framemc.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: framemc-macos-aarch64
+            binary_name: framemc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: framemc-macos-x86_64
+            binary_name: framemc
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
+          targets: ${{ matrix.target }}
           components: clippy, rustfmt
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Check Formatting
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo fmt --check
 
       - name: Cargo Check
-        run: cargo check --all-targets
+        run: cargo check --target ${{ matrix.target }} --all-targets
 
       - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --target ${{ matrix.target }} --all-targets -- -D warnings
 
       - name: Run Tests
-        run: cargo test --all-targets -- --nocapture
+        run: cargo test --target ${{ matrix.target }} --all-targets -- --nocapture
 
       - name: Build Release Binary
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: framemc-${{ matrix.os }}
-          path: |
-            target/release/framemc
-            target/release/framemc.exe
-          if-no-files-found: ignore
+          name: ${{ matrix.artifact_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary_name }}
+          if-no-files-found: error

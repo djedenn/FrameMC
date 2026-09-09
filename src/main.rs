@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::watch;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -114,18 +113,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown_tx_clone = shutdown_tx.clone();
     tokio::spawn(async move {
-        if let Ok(()) = signal::ctrl_c().await {
-            tracing::info!(
-                "OS shutdown signal (Ctrl-C) received, initiating graceful termination..."
-            );
-            let _ = shutdown_tx_clone.send(true);
-        }
+        wait_for_shutdown_signal().await;
+        let _ = shutdown_tx_clone.send(true);
     });
 
     start_listener(config, script_host, shutdown_rx).await?;
 
     tracing::info!("FrameMC Proxy shutdown complete. Exiting cleanly.");
     Ok(())
+}
+
+/// Listens for OS shutdown signals across platforms.
+///
+/// - On Unix (Linux & macOS): Listens concurrently for `SIGINT` (interactive Ctrl-C)
+///   and `SIGTERM` (sent by systemd, Docker, Kubernetes, and launchd).
+/// - On Windows: Listens for `tokio::signal::ctrl_c()`.
+/// - Fallback for other platforms: Listens for `tokio::signal::ctrl_c()`.
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut sigint = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to install SIGINT handler: {e}");
+            return;
+        }
+    };
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to install SIGTERM handler: {e}");
+            return;
+        }
+    };
+
+    tokio::select! {
+        _ = sigint.recv() => {
+            tracing::info!(
+                "OS shutdown signal (SIGINT / Ctrl-C) received, initiating graceful termination..."
+            );
+        }
+        _ = sigterm.recv() => {
+            tracing::info!(
+                "OS shutdown signal (SIGTERM) received, initiating graceful termination..."
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn wait_for_shutdown_signal() {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            tracing::info!(
+                "OS shutdown signal (Ctrl-C) received, initiating graceful termination..."
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to listen for Ctrl-C shutdown signal: {e}");
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn wait_for_shutdown_signal() {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            tracing::info!("OS shutdown signal received, initiating graceful termination...");
+        }
+        Err(e) => {
+            tracing::error!("Failed to listen for shutdown signal: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -190,5 +250,13 @@ mod tests {
     fn test_cli_args_errors() {
         assert!(parse_cli_args(["framemc", "-c"]).is_err());
         assert!(parse_cli_args(["framemc", "--unknown-flag"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_channel_broadcast() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        assert!(!*shutdown_rx.borrow());
+        let _ = shutdown_tx.send(true);
+        assert!(*shutdown_rx.borrow());
     }
 }

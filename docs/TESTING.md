@@ -19,8 +19,8 @@ For architecture details, setup steps, or configuration options, see:
 - [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
 - [5. Play State Machine, Server Switching & Bridge (30 Tests)](#5-play-state-machine-server-switching--bridge-30-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
-- [7. Configuration, Network Listener & Integration Tests (19 Tests)](#7-configuration-network-listener--integration-tests-19-tests)
-- [8. Command-Line Interface & Application Lifecycle (4 Tests)](#8-command-line-interface--application-lifecycle-4-tests)
+- [7. Configuration, Network Listener & Integration Tests (20 Tests)](#7-configuration-network-listener--integration-tests-20-tests)
+- [8. Command-Line Interface & Application Lifecycle (5 Tests)](#8-command-line-interface--application-lifecycle-5-tests)
 
 ---
 
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   136
-Passed:                   136
+Total Test Invocations:   138
+Passed:                   138
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -43,7 +43,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ### Bash (Linux / macOS):
 ```bash
-# Run all 136 tests
+# Run all 138 tests
 cargo test --all-targets
 
 # Run tests with real-time names and stdout/stderr output
@@ -243,7 +243,7 @@ Scripts should never be able to freeze the Tokio reactor or chew through memory.
 
 ---
 
-## 7. Configuration, Network Listener & Integration Tests (19 Tests)
+## 7. Configuration, Network Listener & Integration Tests (20 Tests)
 
 These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against a live SteelMC instance.
 
@@ -252,6 +252,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 | `test_default_template_matches_default_struct` | `config` | Generated default template matches `ProxyConfig` in-memory defaults | ✅ Passed |
 | `test_forwarding_mode_parsing` | `config` | Parsing `velocity_modern`, `legacy_bungee`, and `none` from TOML | ✅ Passed |
 | `test_load_or_create` | `config` | Reading existing config or bootstrapping default configuration | ✅ Passed |
+| `test_load_or_create_nested_subdirectory_cross_platform` | `config` | Recursive parent directory creation and nested config bootstrapping | ✅ Passed |
 | `test_resolve_favicon_uri_auto_detect` | `config` | Automatically detecting and encoding `server-icon.png` | ✅ Passed |
 | `test_resolve_favicon_uri_data_uri` | `config` | Parsing raw `data:image/png;base64,...` URIs | ✅ Passed |
 | `test_resolve_favicon_uri_file_path` | `config` | Resolving filesystem image paths to base64 favicon data | ✅ Passed |
@@ -271,7 +272,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 
 ---
 
-## 8. Command-Line Interface & Application Lifecycle (4 Tests)
+## 8. Command-Line Interface & Application Lifecycle (5 Tests)
 
 Verifies CLI argument handling for configuration overrides (`-c` and `--config`), version flags (`-V`, `--version`), help text output, and clean error exit codes when unrecognized flags or missing file paths are passed.
 
@@ -281,3 +282,4 @@ Verifies CLI argument handling for configuration overrides (`-c` and `--config`)
 | `test_cli_args_config_flag` | `main` | Explicit `-c` and `--config` custom configuration file path parsing | ✅ Passed |
 | `test_cli_args_version_and_help` | `main` | Clean short and long version (`-v`, `-V`, `--version`) and help (`-h`, `--help`) triggers | ✅ Passed |
 | `test_cli_args_errors` | `main` | Rejection of missing configuration values and unrecognized CLI options | ✅ Passed |
+| `test_shutdown_channel_broadcast` | `main` | Asynchronous watch broadcast for graceful termination across all runtime tasks | ✅ Passed |

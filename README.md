@@ -6,8 +6,9 @@
 
   <p>
     <a href="https://github.com/djedenn/FrameMC/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
-    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-136%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
+    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-138%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
     <a href="#-backend-compatibility-matrix"><img src="https://img.shields.io/badge/minecraft-1.20.4%20--%201.21.4%2B%20(764--776%2B)-blue?style=flat-square" alt="Protocols" /></a>
+    <a href="#-platform-support"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue?style=flat-square&logo=linux&logoColor=white" alt="Platforms" /></a>
     <a href="#-benchmarks--resource-footprint"><img src="https://img.shields.io/badge/memory-~15%20MB%20RSS-blueviolet?style=flat-square" alt="Memory" /></a>
     <a href="#-benchmarks--resource-footprint"><img src="https://img.shields.io/badge/GC-0ms%20(Zero%20GC)-brightgreen?style=flat-square" alt="Zero GC" /></a>
     <img src="https://img.shields.io/badge/rustc-1.80%2B-lightgrey?style=flat-square" alt="Rustc" />
@@ -110,6 +111,22 @@ Forwarding strategies are configured per-backend, allowing mixed architectures o
 | **Spigot / CraftBukkit** | ✅ **Full** | `legacy_bungee` | `spigot.yml`<br>`settings.bungeecord: true` | Real UUIDs and client IPs via null-delimited Handshake host. |
 | **NeoForge / Forge** (1.20.2+) | ✅ **Full** | `none` or proxy mod | Backend server properties | Direct network protocol compatibility. |
 | **Vanilla Mojang** | ✅ **Full** | `none` | `server.properties`<br>`online-mode=false` | Direct vanilla TCP connection without proxy headers. |
+
+---
+
+## 💻 Platform Support
+
+FrameMC is engineered for native cross-platform performance across Linux, macOS, and Windows. Tokio multiplexes asynchronous network I/O through each platform's premier kernel reactor without intermediate runtime abstraction layers:
+
+| Operating System | Supported Architectures | Kernel Reactor | Graceful Shutdown Signals | CI Verification |
+| :--- | :--- | :--- | :--- | :---: |
+| **Linux** | `x86_64` (glibc 2.17+ / musl) | `epoll` | `SIGTERM`, `SIGINT` (Ctrl-C) | Continuous |
+| **macOS** | Apple Silicon (`aarch64`) & Intel (`x86_64`) | `kqueue` | `SIGTERM`, `SIGINT` (Ctrl-C) | Continuous |
+| **Windows** | `x86_64` (10 / 11 / Server) | `IOCP` / `wepoll` | Console Ctrl-C / Break | Continuous |
+
+- **Cross-Platform Graceful Termination**: On Linux and macOS, FrameMC hooks both `SIGTERM` and `SIGINT` using `tokio::signal::unix`, enabling immediate, clean connection draining under **systemd**, **Docker**, **Kubernetes**, and **launchd**. On Windows, console interrupt events are cleanly caught and handled.
+- **Universal Path Handling**: Configuration loading, Rhai scripting file lookups, and plugin directory scanning strictly utilize `std::path::Path` / `PathBuf`, preventing path separator issues across POSIX and Windows filesystems.
+- **TCP_NODELAY & Zero-Copy Socket Splicing**: TCP socket options (`set_nodelay(true)`) and bidirectional streaming (`tokio::io::copy_bidirectional`) operate with kernel-assisted zero-copy efficiency across all three major platforms.
 
 ---
 
