@@ -1,8 +1,55 @@
 # Scripting FrameMC with Rhai
 
-Writing Java plugins for simple proxy tasks has always felt like overkill. Compiling a fat JAR, wrestling with classloader isolation, and debugging third-party memory leaks just to redirect `/hub` or check a maintenance whitelist burns engineering time.
+Writing Java plugins for simple proxy tasks has always been painful. Compiling fat JARs, fighting classloaders, and debugging third-party memory leaks just to reroute `/hub` or check an admin whitelist burns time.
 
-FrameMC embeds [Rhai](https://rhai.rs/), an embedded scripting language designed specifically for Rust. Scripts compile directly to abstract syntax trees in memory and execute inside strict runtime sandboxes. You can edit a `.rhai` script, test it immediately, and run it with native performance and zero JVM metaspace overhead.
+FrameMC embeds [Rhai](https://rhai.rs/), a native Rust scripting language. Scripts compile to bytecode ASTs in memory and run inside tight sandboxes with zero JVM metaspace overhead.
+
+## Table of Contents
+- [30-Second Quick Start](#30-second-quick-start)
+- [Script Sandboxing & Safety Limits](#script-sandboxing--safety-limits)
+- [Where Scripts Live](#where-scripts-live)
+- [Event Hooks Reference](#event-hooks-reference)
+  - [`on_player_join`](#1-on_player_joinevent)
+  - [`on_player_command`](#2-on_player_commandevent)
+  - [`on_tab_complete`](#3-on_tab_completeevent)
+- [Built-in Functions Reference](#built-in-functions-reference)
+  - [Shared Key-Value Store (`kv_*`)](#shared-in-memory-key-value-store)
+  - [Time Utilities](#time--timestamps)
+  - [Server Queries](#server-queries)
+  - [Logging](#console-logging)
+- [Rhai Syntax Gotchas](#rhai-syntax-gotchas)
+- [Practical Script Recipes](#practical-script-examples)
+  - [1. Server Switcher (`/server`, `/hub`)](#example-1-robust-server-switcher-pluginsserver_switcherrhai)
+  - [2. Maintenance Mode with Whitelist](#example-2-maintenance-mode-with-admin-whitelist-pluginsmaintenancerhai)
+  - [3. Anti-Spam Command Cooldowns](#example-3-command-cooldowns--spam-protection-pluginsrate_limitrhai)
+  - [4. Version-Based Server Routing](#example-4-version-based-dynamic-routing-pluginsversion_routingrhai)
+
+---
+
+## 30-Second Quick Start
+
+Create `scripts/main.rhai` and paste this:
+
+```rhai
+// Welcome joining players in console
+fn on_player_join(event) {
+    proxy_info("Player " + event.player_name + " joined from " + event.ip);
+    #{ allow: true, disconnect_reason: "", target_server: "" }
+}
+
+// Intercept /lobby and /hub
+fn on_player_command(event) {
+    if event.command == "/lobby" || event.command == "/hub" {
+        return #{
+            cancel: true,
+            reroute_server: "lobby",
+            send_message: "§aConnecting to lobby..."
+        };
+    }
+    #{ cancel: false, reroute_server: "", send_message: "" }
+}
+```
+That's it. No Maven, no Gradle, no restart needed if using dynamic reloads.
 
 ---
 
@@ -140,6 +187,48 @@ Messages are dispatched directly to FrameMC's structured tracing subscriber:
 - `proxy_info(message: String)`: Logs at `INFO` level (`[Rhai] ...`).
 - `proxy_warn(message: String)`: Logs at `WARN` level (`[Rhai] ...`).
 - `proxy_error(message: String)`: Logs at `ERROR` level (`[Rhai] ...`).
+
+---
+
+## Rhai Syntax Gotchas
+
+If you are coming from JavaScript, Python, or Java, watch out for these subtle differences:
+
+1. **Object Maps use `#{ ... }`**:
+   ```rhai
+   // Correct in Rhai
+   let my_map = #{ allow: true, reason: "OK" };
+
+   // SYNTAX ERROR in Rhai
+   let bad_map = { allow: true };
+   ```
+
+2. **No `null` or `nil` (Unit type `()`)**:
+   Missing keys from `kv_get("missing")` return unit `()`.
+   ```rhai
+   let val = kv_get("cooldown:Steve");
+   if val == () {
+       // Key does not exist
+   }
+   ```
+
+3. **String Slicing**:
+   Use Rust-style range syntax:
+   ```rhai
+   let cmd = "/server survival";
+   let target = cmd[8..cmd.len]; // "survival"
+   ```
+
+4. **Variables and Mutability**:
+   Variables declared with `let` are mutable by default in Rhai, but constants use `const`:
+   ```rhai
+   let count = 1;
+   count += 1; // OK
+   const MAX_HOPS = 5; // Immutable
+   ```
+
+5. **Minecraft Chat Colors**:
+   Always use the `§` section sign for chat colors: `§a` (green), `§c` (red), `§e` (yellow), `§6` (gold), `§7` (gray), `§f` (white), `§r` (reset).
 
 ---
 

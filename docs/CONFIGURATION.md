@@ -1,8 +1,24 @@
 # FrameMC Configuration Guide
 
-FrameMC stores all its settings in a single `config.toml` file located in the current working directory. There are no XML schemas, no nested YAML indentation traps, and no external database connections to manage.
+FrameMC stores all its settings in a single `config.toml` file in the working directory. No XML schemas, no YAML indentation landmines, and no external database dependencies.
 
-If no configuration file exists when the binary starts, FrameMC automatically writes a working starter configuration bound to `0.0.0.0:25565` with fallback routes to local backends.
+If no configuration file exists when the binary starts, FrameMC generates a working starter configuration bound to `0.0.0.0:25565`.
+
+## Table of Contents
+- [Complete `config.toml` Example](#complete-configtoml-example)
+- [Configuration Keys Reference](#configuration-keys-reference)
+  - [Top-Level Directives](#top-level-directives)
+  - [Backend Definitions](#backend-definitions-serversname)
+- [Forwarding Mode Selection Matrix](#forwarding-mode-selection-matrix)
+- [Routing Mechanics & Failover](#routing-mechanics--failover)
+- [Compression Decoupling & Tuning](#compression-decoupling--tuning)
+- [Connection Timeouts](#connection-timeouts)
+- [Backend Configuration Examples](#backend-configuration-examples)
+  - [Paper / Purpur / Folia (Velocity Modern)](#1-paper--purpur--folia-modern-velocity-forwarding)
+  - [Spigot / CraftBukkit (Legacy Bungee)](#2-spigot--craftbukkit-legacy-bungeecord-forwarding)
+  - [Fabric / Quilt (Modded)](#3-fabric--quilt-modded-backends)
+  - [SteelMC (Native Rust)](#4-steelmc-native-rust-backend)
+  - [Vanilla Mojang Dedicated Server](#5-vanilla-mojang-dedicated-server)
 
 ---
 
@@ -131,6 +147,20 @@ Each downstream server is configured under a `[servers.<name>]` table header. Th
 | `port` | Integer | *Required* | TCP port of the downstream Minecraft server. |
 | `forwarding_mode` | String | `"none"` | Forwarding strategy. Accepted values: `"velocity_modern"` (or `"modern"` / `"velocity"`), `"legacy_bungee"` (or `"legacy"` / `"bungee"`), `"none"`. |
 | `forwarding_secret` | String (optional) | None | Shared HMAC secret token. Required for `velocity_modern`; ignored for other forwarding modes. |
+
+---
+
+## Forwarding Mode Selection Matrix
+
+Minecraft backends need to know who is connecting (real player UUID, skins, and original remote IP). Choose the mode that fits your downstream stack:
+
+| Mode | When to Use | How It Works | Security Level |
+| :--- | :--- | :--- | :--- |
+| `velocity_modern` | **Paper, Purpur, Folia, Fabric** (with FabricProxy-Lite) | Sends `velocity:player_info` login plugin message signed with HMAC-SHA256 | 🟢 **Highest** (Tamper-proof, cryptographically signed) |
+| `legacy_bungee` | **Spigot, CraftBukkit, old forks** | Rewrites handshake host: `host\0client_ip\0uuid` | 🟡 **Medium** (Vulnerable if backend port is exposed to the internet) |
+| `none` | **SteelMC, Vanilla, internal staging** | Direct TCP stream without metadata headers | ⚪ **None** (Backend sees proxy's IP, offline UUIDs) |
+
+> ⚠️ **Firewall Rule of Thumb**: If using `legacy_bungee` or `none`, **never** expose backend ports (e.g. `25568`) to the public internet. Use `bind_address = "127.0.0.1"` on backends or bind them to a private Docker/VPC network. Otherwise, players can bypass FrameMC entirely.
 
 ---
 

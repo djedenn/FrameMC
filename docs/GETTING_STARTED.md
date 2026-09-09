@@ -117,13 +117,21 @@ $env:RUST_LOG="debug"; .\framemc.exe
 
 ## Connecting Your First Backend
 
-By default, FrameMC routes incoming connections to a backend named `lobby` at `127.0.0.1:25566`.
+A proxy needs at least one downstream Minecraft server to send players to. **Do not run your backend server on the same port as FrameMC.**
+
+### Recommended Port Layout
+| Service | Bind Host | Port | Forwarding Mode |
+| :--- | :--- | :--- | :--- |
+| **FrameMC (Proxy)** | `0.0.0.0` (Public) | `25565` | Incoming player gateway |
+| **Lobby Backend (Paper)** | `127.0.0.1` (Local) | `25568` | `velocity_modern` |
+| **Survival Backend (Paper)** | `127.0.0.1` (Local) | `25569` | `velocity_modern` |
+| **Fallback Hub (SteelMC)** | `127.0.0.1` (Local) | `25566` | `none` |
+
+### Step-by-Step Paper Setup (Velocity Modern Forwarding)
 
 Here is how to connect a local Paper server running on port `25568`:
 
-1. Open `config.toml` in your editor.
-2. Configure Paper as your default server with modern Velocity forwarding enabled:
-
+1. Open `config.toml` in your FrameMC directory:
 ```toml
 default_server = "paper"
 
@@ -131,23 +139,87 @@ default_server = "paper"
 address = "127.0.0.1"
 port = 25568
 forwarding_mode = "velocity_modern"
-forwarding_secret = "replace_with_a_secure_random_token"
+forwarding_secret = "make_this_a_random_64_char_secret_key"
 ```
 
-3. Open `config/paper-global.yml` in your Paper server directory:
-
+2. Open `config/paper-global.yml` in your Paper server folder:
 ```yaml
 proxies:
   velocity:
     enabled: true
     online-mode: true
-    secret: "replace_with_a_secure_random_token"
+    secret: "make_this_a_random_64_char_secret_key"
 ```
 
-4. Set `online-mode=false` in Paper's `server.properties`. Because FrameMC authenticates players with Mojang, backend servers must not re-authenticate incoming connections.
-5. Restart Paper, start FrameMC, and join via your client at `localhost:25565`.
+3. Open `server.properties` on Paper:
+```properties
+server-port=25568
+online-mode=false
+```
+> **Critical**: Set `online-mode=false` on backend servers. FrameMC handles Mojang authentication at the proxy edge. If Paper also tries to authenticate, connections will fail with encryption errors.
 
-For setup instructions covering Spigot, Fabric, SteelMC, and Vanilla, check the [Configuration Reference](CONFIGURATION.md).
+4. Start Paper first, then start FrameMC. Connect your Minecraft client to `localhost:25565`.
+
+For Spigot, Fabric, SteelMC, and Vanilla configs, check the [Configuration Reference](CONFIGURATION.md).
+
+---
+
+## Production Deployment
+
+When deploying FrameMC to a production Linux host (Ubuntu, Debian, AlmaLinux, Arch):
+
+### 1. Systemd Service (`/etc/systemd/system/framemc.service`)
+
+Create a dedicated system user and service file so the proxy restarts automatically on boot or failure:
+
+```ini
+[Unit]
+Description=FrameMC Minecraft Reverse Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=minecraft
+Group=minecraft
+WorkingDirectory=/opt/framemc
+ExecStart=/opt/framemc/framemc -c /opt/framemc/config.toml
+Restart=always
+RestartSec=5s
+
+# Raise open file descriptor limits for high connection counts
+LimitNOFILE=65536
+
+# Security sandbox flags
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now framemc
+```
+
+Check live logs:
+```bash
+journalctl -u framemc -f
+```
+
+### 2. File Descriptor Limits (`ulimit`)
+Each active client connection and backend connection consumes a TCP socket (file descriptor). Ensure your host limits allow scaling:
+
+```bash
+# Check current limit
+ulimit -n
+
+# Set temporary limit in current shell
+ulimit -n 65536
+```
+In `systemd`, `LimitNOFILE=65536` takes care of this automatically.
 
 ---
 

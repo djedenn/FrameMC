@@ -2,11 +2,16 @@
 
 This document details the low-level architectural invariants, protocol wire layouts, and execution lifecycle of **FrameMC**—a high-performance, native Rust reverse proxy for Minecraft Java Edition.
 
-If you are looking for configuration directives, setup guides, or test suites, see:
-- [Getting Started Guide](GETTING_STARTED.md)
-- [Configuration Reference](CONFIGURATION.md)
-- [Rhai Scripting Guide](SCRIPTING.md)
-- [Automated Test Suite & Protocol Verification](TESTING.md)
+## Table of Contents
+- [1. Core Architectural Invariants [R-01] to [R-12]](#1-architectural-directives)
+- [2. Minecraft Protocol State Machine](#2-protocol-state-machine)
+- [3. Wire Layouts & Technical Codecs](#3-technical-protocol-wire-layouts)
+  - [3.1 VarInt & VarLong LEB128](#31-varint--varlong-encoding)
+  - [3.2 Mojang SHA-1 Two's-Complement Hex](#32-mojang-sha-1-negative-hash)
+  - [3.3 Velocity Modern Forwarding Layout](#33-velocity-modern-forwarding-wire-layout)
+- [4. Dynamic Server Switching & Dimension Caching](#4-dynamic-server-switching-flow)
+- [5. Brigadier Command Tree Injection](#5-brigadier-command-tree-injection)
+- [6. Play Bridge & Zero-Copy Socket Splicing](#6-play-bridge--socket-splicing-design)
 
 ---
 
@@ -31,7 +36,65 @@ FrameMC enforces twelve non-negotiable architectural invariants across its codeb
 
 ---
 
-## 2. Technical Protocol Wire Layouts
+## 2. Protocol State Machine
+
+Minecraft Java Edition handshakes progress through a strictly ordered sequence of protocol states:
+
+```text
+               ┌───────────────────────┐
+               │    Handshake (0x00)   │
+               └───────────┬───────────┘
+                           │
+             ┌─────────────┴─────────────┐
+   next_state = 1              next_state = 2
+             ▼                           ▼
+┌─────────────────────────┐  ┌─────────────────────────┐
+│      Status (Ping)      │  │          Login          │
+│  - StatusRequest (0x00) │  │  - LoginStart (0x00)    │
+│  - StatusResponse JSON  │  │  - Encryption (RSA/AES) │
+│  - Ping / Pong (0x01)   │  │  - LoginSuccess (0x02)  │
+└─────────────────────────┘  └───────────┬─────────────┘
+                                         │ (1.20.2+)
+                                         ▼
+                             ┌─────────────────────────┐
+                             │      Configuration      │
+                             │  - Registry Data Cache  │
+                             │  - FinishConfig (0x02)  │
+                             └───────────┬─────────────┘
+                                         │
+                                         ▼
+                             ┌─────────────────────────┐
+                             │          Play           │
+                             │  Zero-Copy TCP Splicing │
+                             │  (copy_bidirectional)   │
+                             └─────────────────────────┘
+```
+
+### Phase Details
+
+1. **Handshake (State 0)**:
+   The client announces its protocol version, destination hostname/port, and intent (`next_state` = 1 for ping, 2 for login). FrameMC parses this packet without allocating memory beyond the initial VarInt reader buffer.
+
+2. **Status (State 1)**:
+   Used when Minecraft lists servers in the multiplayer menu:
+   - Client sends `StatusRequest (0x00)`.
+   - FrameMC replies with `StatusResponse (0x00)` containing MOTD string, current/max player numbers, and base64 favicon.
+   - Client sends `PingRequest (0x01)` with a 64-bit timestamp. FrameMC reflects the exact payload back in `PongResponse (0x01)` and immediately shuts down the TCP socket.
+
+3. **Login (State 2)**:
+   - **Offline mode**: FrameMC computes an offline player UUID v3 (`MD5("OfflinePlayer:" + username)`), sends `LoginSuccess (0x02)`, and moves forward.
+   - **Online mode**: FrameMC generates an RSA-1024 public key and random 4-byte verify token, sending `EncryptionRequest (0x01)`. The client returns `EncryptionResponse (0x02)` containing the shared secret encrypted with RSA. FrameMC authenticates the hash against Mojang's session server, turns on AES-128-CFB8 stream encryption, and transmits `LoginSuccess (0x02)`.
+   - Client responds with `LoginAcknowledged (0x03)` (protocol 764+).
+
+4. **Configuration (State 3)**:
+   Introduced in Minecraft 1.20.2 to clean up the ancient "Login to Play" state transition. Downstream servers send custom brand packets, resource pack offers, feature flags, and crucially—registry codecs (`minecraft:dimension_type`, biomes, chat types, damage types). FrameMC intercepts and caches these registry structures per backend so it can synthesize world transitions mid-game. Once both sides exchange `FinishConfiguration`, the session transitions to `Play`.
+
+5. **Play (State 4)**:
+   Active gameplay. FrameMC hands socket control to Tokio's `copy_bidirectional` kernel-assisted pipeline.
+
+---
+
+## 3. Technical Protocol Wire Layouts
 
 ### 2.1 VarInt & VarLong Encoding
 Minecraft frames all packet lengths and identifiers using variable-length LEB128 integers. Each byte contributes 7 payload bits and 1 continuation bit in the most significant bit (MSB):
@@ -85,7 +148,7 @@ The HMAC signature protects the player payload from forged UUIDs or spoofed IP a
 
 ---
 
-## 3. Dynamic Server Switching Flow
+## 4. Dynamic Server Switching Flow
 
 When a player triggers a server transfer (through `/server <target>` or a script redirect):
 
@@ -113,7 +176,22 @@ Client                      FrameMC Proxy                  Target Backend
 
 ---
 
-## 4. Play Bridge & Socket Splicing Design
+## 5. Brigadier Command Tree Injection
+
+Minecraft Java Edition uses Mojang's Brigadier command dispatcher. When a player logs in, the backend sends a clientbound `DeclareCommands` packet (`0x11` in 1.20.4, `0x10` in 1.21.4) declaring every recognized command, argument parser, and permission node.
+
+If a proxy doesn't inject its own commands into this tree, the client's chat field highlights `/server` or `/lobby` in red and will not offer suggestions when the player presses `Tab`.
+
+### How FrameMC Injects Commands:
+1. **Intercept `DeclareCommands`**: FrameMC inspects the packet as it leaves the backend during initial join.
+2. **Locate the Root Node**: The packet header specifies the VarInt index of the root command node in the flat node array.
+3. **Append Proxy Nodes**: FrameMC grafts literal child nodes for `/server`, `/lobby`, `/hub`, and other configured commands into the root node's children list.
+4. **Rewrite Offsets**: If the injection changes node count or index offsets, FrameMC recalculates all VarInt lengths and node references on the wire.
+5. **Client Renders Natively**: The client receives the augmented command tree and renders instant auto-completions directly in the UI.
+
+---
+
+## 6. Play Bridge & Socket Splicing Design
 
 Once a connection enters the `Play` state, FrameMC steps back from packet parsing. 
 

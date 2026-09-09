@@ -10,6 +10,18 @@ For architecture details, setup steps, or configuration options, see:
 - [Configuration Reference](CONFIGURATION.md)
 - [Rhai Scripting Guide](SCRIPTING.md)
 
+## Table of Contents
+- [Test Execution Summary](#test-execution-summary)
+- [Developer Test Commands](#developer-test-commands)
+- [1. Cryptography & Session Authentication (9 Tests)](#1-cryptography--session-authentication-9-tests)
+- [2. Protocol Wire Formats, Handshake & Compression (24 Tests)](#2-protocol-wire-formats-handshake--compression-24-tests)
+- [3. Login Authentication & Forwarding Handshakes (25 Tests)](#3-login-authentication--forwarding-handshakes-25-tests)
+- [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
+- [5. Play State Machine, Server Switching & Bridge (30 Tests)](#5-play-state-machine-server-switching--bridge-30-tests)
+- [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
+- [7. Configuration, Network Listener & Integration Tests (19 Tests)](#7-configuration-network-listener--integration-tests-19-tests)
+- [8. Command-Line Interface & Application Lifecycle (4 Tests)](#8-command-line-interface--application-lifecycle-4-tests)
+
 ---
 
 ## Test Execution Summary
@@ -27,14 +39,23 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 ===============================================================================
 ```
 
-To execute the complete test suite locally:
+## Developer Test Commands
 
 ```bash
-# Run all unit and integration tests
+# Run all 136 tests
 cargo test --all-targets
 
-# Run tests with real-time test name output
+# Run tests with real-time names and stdout/stderr output
 cargo test --all-targets -- --nocapture
+
+# Run a specific test by name filter
+cargo test test_mojang_sha1_known_vectors
+
+# Run only integration tests in tests/
+cargo test --test '*'
+
+# Run with debug tracing enabled for network inspection
+RUST_LOG=framemc=debug cargo test test_full_status_ping_flow_over_tcp -- --nocapture
 ```
 
 ---

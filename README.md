@@ -16,20 +16,26 @@
 </div>
 
 > [!WARNING]
-> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 136 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
+> **Early Development (`v0.1.0-alpha`)**: FrameMC is under active development. Core protocol handshakes, modern configuration negotiation, cryptographic routines, and routing state machines pass all 136 automated test cases. However, this is experimental software. Test thoroughly in staging before routing production traffic through it. Breaking changes may occur between releases.
 
 ---
 
-Most Minecraft proxies run on the JVM and rely on Netty pipelines. Velocity solved BungeeCord's threading bottlenecks years ago, and for standard setups, it works well.
+### The Problem with JVM Proxies
 
-Still, running on Java brings real operational pain:
-- When a minigame lobby dumps hundreds of players into a hub at once, allocating packet objects across active sessions hammers young-gen GC. Even with ZGC or Shenandoah, you get tail latency spikes and scheduling jitter.
-- Typical proxies deserialize, parse, wrap, and re-encode every single gameplay packet flowing between player and server. But proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket burns CPU for nothing.
-- An idle Velocity process with two plugins easily sits on 500 MB to 1 GB of memory. If you run multiple edge proxies across different regions or maintain local staging nodes, that overhead adds up fast.
+Most Minecraft proxies run on the JVM and rely on Netty pipelines. Velocity fixed BungeeCord's threading bottlenecks years ago, and for standard setups it gets the job done. But running a proxy on Java still comes with fundamental operational baggage:
 
-FrameMC takes a simpler route: handle the protocol dance during login, negotiate the modern 1.20.2+ Configuration handshake, and then step completely out of the data path.
+- **Garbage Collection Spikes**: When a minigame lobby dumps hundreds of players into a hub at once, allocating packet objects across active sessions hammers young-gen GC. Even with modern collectors like ZGC or Shenandoah, you get tail latency spikes and scheduling jitter right when you need smooth throughput.
+- **Unnecessary Serialization**: Traditional proxies deserialize, parse, wrap, and re-encode every single packet moving between client and server. But reverse proxies rarely care about block changes, light updates, or entity motions. Deserializing megabytes of chunk data into heap objects just to write them out to another socket wastes massive amounts of CPU cycles.
+- **Heavy Resource Footprint**: An idle Velocity instance with a couple of plugins easily consumes 500 MB to 1 GB of memory. If you run multiple edge proxies across different regions or host lightweight staging nodes, that memory overhead adds up fast.
 
-Once a player transitions into the `Play` state, Tokio bridges the raw TCP streams directly via `tokio::io::copy_bidirectional`. Packets move straight through kernel socket buffers without user-space buffer allocations. You get ~15 MB RSS, instant startups, and zero GC pauses.
+### The FrameMC Approach
+
+FrameMC takes a simpler, more pragmatic route:
+
+1. **Do the handshake work**: Authenticate the client with Mojang (or offline UUID v3), negotiate the modern 1.20.2+ `Configuration` registry handshake, and verify backend forwarding tokens.
+2. **Step out of the data path**: Once the session transitions into the `Play` state, Tokio bridges the raw TCP streams directly using `tokio::io::copy_bidirectional`. Packets move straight through kernel socket buffers without user-space buffer allocations or heap churn.
+
+The result is **~15 MB RSS**, sub-15ms cold boot times, and zero GC pauses.
 
 ---
 
@@ -131,7 +137,20 @@ All 136 unit and integration tests should pass.
 ```bash
 ./target/release/framemc
 ```
-If no `config.toml` exists in the working directory, FrameMC generates a documented template and binds to `0.0.0.0:25565`.
+If no `config.toml` exists in the working directory, FrameMC automatically writes a starter configuration template and binds to `0.0.0.0:25565`.
+
+```toml
+# Minimal config.toml
+bind_address = "0.0.0.0"
+bind_port = 25565
+online_mode = true
+default_server = "lobby"
+
+[servers.lobby]
+address = "127.0.0.1"
+port = 25566
+forwarding_mode = "none"
+```
 
 ---
 
