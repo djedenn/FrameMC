@@ -19,7 +19,7 @@ For architecture details, setup steps, or configuration options, see:
 - [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
 - [5. Play State Machine, Server Switching & Bridge (43 Tests)](#5-play-state-machine-server-switching--bridge-43-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
-- [7. Configuration, Network Listener & Integration Tests (20 Tests)](#7-configuration-network-listener--integration-tests-20-tests)
+- [7. Configuration, Network Listener & Integration Tests (21 Tests)](#7-configuration-network-listener--integration-tests-21-tests)
 - [8. Command-Line Interface & Application Lifecycle (6 Tests)](#8-command-line-interface--application-lifecycle-6-tests)
 
 ---
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   152
-Passed:                   152
+Total Test Invocations:   153
+Passed:                   153
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%

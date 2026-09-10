@@ -144,6 +144,60 @@ impl Default for ProxyConfig {
     }
 }
 
+/// Default server icon embedded directly into the binary.
+pub const DEFAULT_SERVER_ICON: &[u8] = include_bytes!("../server-icon.png");
+
+/// Default root routing and interception script (`scripts/main.rhai`).
+pub const DEFAULT_MAIN_SCRIPT: &str = include_str!("../scripts/main.rhai");
+
+/// Default server switching plugin (`plugins/server_switcher.rhai`).
+pub const DEFAULT_SERVER_SWITCHER_PLUGIN: &str = include_str!("../plugins/server_switcher.rhai");
+
+/// Bootstraps default environment assets into the base directory if they are missing:
+/// - `server-icon.png`
+/// - `scripts/main.rhai` (or path configured in `config.script_path`)
+/// - `plugins/server_switcher.rhai` (in `config.plugins_dir`)
+pub fn bootstrap_default_files(
+    config: &ProxyConfig,
+    base_dir: Option<&Path>,
+) -> Result<(), std::io::Error> {
+    let base = base_dir.unwrap_or_else(|| Path::new(""));
+
+    // 1. server-icon.png
+    let icon_path = base.join("server-icon.png");
+    if !icon_path.exists() {
+        if let Some(parent) = icon_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let _ = std::fs::write(&icon_path, DEFAULT_SERVER_ICON);
+    }
+
+    // 2. scripts/main.rhai
+    let script_path = base.join(&config.script_path);
+    if !script_path.exists() {
+        if let Some(parent) = script_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let _ = std::fs::write(&script_path, DEFAULT_MAIN_SCRIPT);
+    }
+
+    // 3. plugins/server_switcher.rhai
+    let plugins_dir = base.join(&config.plugins_dir);
+    let switcher_path = plugins_dir.join("server_switcher.rhai");
+    if !switcher_path.exists() {
+        if !plugins_dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(&plugins_dir)?;
+        }
+        let _ = std::fs::write(&switcher_path, DEFAULT_SERVER_SWITCHER_PLUGIN);
+    }
+
+    Ok(())
+}
+
 impl ProxyConfig {
     /// Resolves the favicon into a base64 Data URI ("data:image/png;base64,...").
     pub fn resolve_favicon(&mut self, base_dir: Option<&Path>) {
@@ -151,9 +205,11 @@ impl ProxyConfig {
     }
 
     /// Loads configuration from the given file path.
-    /// If the file does not exist, creates it with a fully documented default configuration.
+    /// If the file does not exist, creates it with a fully documented default configuration
+    /// and bootstraps all default assets (`server-icon.png`, `scripts/main.rhai`, `plugins/server_switcher.rhai`).
     pub fn load_or_create(path: &str) -> Result<Self, ProxyError> {
         let file_path = Path::new(path);
+        let is_new = !file_path.exists();
         let mut config: ProxyConfig = if file_path.exists() {
             let content = std::fs::read_to_string(file_path)?;
             toml::from_str(&content).map_err(|e| {
@@ -170,6 +226,10 @@ impl ProxyConfig {
                 ProxyError::ConfigError(format!("Failed to parse default config template: {e}"))
             })?
         };
+
+        if is_new {
+            let _ = bootstrap_default_files(&config, file_path.parent());
+        }
 
         config.resolve_favicon(file_path.parent());
         Ok(config)
@@ -477,5 +537,38 @@ pub mod tests {
 
         let _ = std::fs::remove_file(&nested_config_path);
         let _ = std::fs::remove_dir_all(nested_dir.parent().unwrap());
+    }
+
+    #[test]
+    fn test_bootstrap_default_files_creates_all_assets() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("framemc_bootstrap_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let config_path = temp_dir.join("config.toml");
+        let path_str = config_path.to_str().unwrap();
+
+        assert!(!config_path.exists());
+        let config =
+            ProxyConfig::load_or_create(path_str).expect("Failed to bootstrap environment");
+
+        // Verify config.toml exists
+        assert!(config_path.exists());
+
+        // Verify server-icon.png exists and favicon is resolved
+        let icon_path = temp_dir.join("server-icon.png");
+        assert!(icon_path.exists());
+        assert!(config.favicon.is_some());
+
+        // Verify scripts/main.rhai exists
+        let script_path = temp_dir.join("scripts").join("main.rhai");
+        assert!(script_path.exists());
+
+        // Verify plugins/server_switcher.rhai exists
+        let plugin_path = temp_dir.join("plugins").join("server_switcher.rhai");
+        assert!(plugin_path.exists());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

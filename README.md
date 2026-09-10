@@ -6,7 +6,7 @@
 
   <p>
     <a href="https://github.com/djedenn/FrameMC/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
-    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-152%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
+    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-153%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
     <a href="#-backend-compatibility-matrix"><img src="https://img.shields.io/badge/minecraft-1.20.4%20--%201.21.4%2B%20(764--776%2B)-blue?style=flat-square" alt="Protocols" /></a>
     <a href="#-platform-support"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue?style=flat-square&logo=linux&logoColor=white" alt="Platforms" /></a>
     <a href="#-benchmarks--resource-footprint"><img src="https://img.shields.io/badge/memory-~15%20MB%20RSS-blueviolet?style=flat-square" alt="Memory" /></a>
@@ -17,7 +17,7 @@
 </div>
 
 > [!WARNING]
-> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 152 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
+> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 153 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
 
 ---
 
@@ -130,47 +130,37 @@ FrameMC is engineered for native cross-platform performance across Linux, macOS,
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Single Binary, Zero Setup)
 
-### 1. Prerequisites
-- [Rust 1.80+](https://www.rust-lang.org/tools/install) (stable toolchain)
-- Cargo
+FrameMC is 100% self-bootstrapping. You don't need to unzip folders, install a Java runtime, or manually create templates.
 
-### 2. Build Release Binary
+### 1. Download & Run
+Grab the standalone binary for your OS from [GitHub Releases](https://github.com/djedenn/FrameMC/releases/latest), drop it into an empty folder, and run:
+
 ```bash
-git clone https://github.com/djedenn/FrameMC.git
-cd FrameMC
-cargo build --release
-```
-The compiled executable lands at `target/release/framemc` (or `framemc.exe` on Windows).
+# Linux
+chmod +x framemc-linux-x86_64
+./framemc-linux-x86_64
 
-### 3. Run Verification Tests
-```bash
-cargo test --all-targets
-```
-All 152 unit and integration tests should pass.
+# macOS (Apple Silicon / Intel)
+chmod +x framemc-macos-*
+./framemc-macos-aarch64   # or ./framemc-macos-x86_64
 
-### 4. Run FrameMC
-```bash
-./target/release/framemc
-```
-If no `config.toml` exists in the working directory, FrameMC automatically writes a starter configuration template and binds to `0.0.0.0:25565`.
-
-```toml
-# Minimal config.toml
-bind_address = "0.0.0.0"
-bind_port = 25565
-online_mode = true
-default_server = "lobby"
-
-[servers.lobby]
-address = "127.0.0.1"
-port = 25566
-forwarding_mode = "none"
+# Windows
+.\framemc.exe
 ```
 
-### 5. Connect Your Client
-Launch Minecraft Java Edition (1.20.4 through 1.21.4+) and connect to `127.0.0.1:25565`. FrameMC handles authentication and relays you into the configured backend.
+### 2. Automatic First-Run Bootstrapping
+On startup, FrameMC immediately generates everything needed in the folder:
+- `config.toml` &mdash; Pre-configured listener on port `25565` routing to `lobby` on port `25566`.
+- `server-icon.png` &mdash; Default 64×64 server favicon.
+- `scripts/main.rhai` &mdash; Join lifecycle routing and chat command hooks.
+- `plugins/server_switcher.rhai` &mdash; Ready-to-use `/server` transfer command.
+
+### 3. Connect
+Launch Minecraft Java Edition (1.20.4 – 1.21.4+) and connect to `127.0.0.1:25565`.
+
+*(Prefer building from source? Run `git clone https://github.com/djedenn/FrameMC.git && cd FrameMC && cargo build --release`)*
 
 ---
 

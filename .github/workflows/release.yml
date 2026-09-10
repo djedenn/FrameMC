@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-release:
-    name: Build (${{ matrix.artifact_name }})
+    name: Build (${{ matrix.asset_name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -18,24 +18,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: framemc-linux-x86_64
             binary_name: framemc
-            archive_ext: tar.gz
+            asset_name: framemc-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: framemc-windows-x86_64
             binary_name: framemc.exe
-            archive_ext: zip
+            asset_name: framemc.exe
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: framemc-macos-aarch64
             binary_name: framemc
-            archive_ext: tar.gz
+            asset_name: framemc-macos-aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: framemc-macos-x86_64
             binary_name: framemc
-            archive_ext: tar.gz
+            asset_name: framemc-macos-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -48,32 +44,21 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package Release Asset (Unix)
+      - name: Prepare Release Asset (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          mkdir staging
-          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} staging/
-          cp config.toml server-icon.png README.md LICENSE-MIT LICENSE-APACHE staging/
-          cp -r scripts staging/
-          cp -r plugins staging/
-          cd staging
-          tar -czvf ../${{ matrix.artifact_name }}.tar.gz *
-          cd ..
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ./${{ matrix.asset_name }}
+          chmod +x ./${{ matrix.asset_name }}
 
-      - name: Package Release Asset (Windows)
+      - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path staging
-          Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} staging/
-          Copy-Item config.toml, server-icon.png, README.md, LICENSE-MIT, LICENSE-APACHE staging/
-          Copy-Item -Recurse scripts, plugins staging/
-          Compress-Archive -Path staging/* -DestinationPath ${{ matrix.artifact_name }}.zip
+          Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} ./${{ matrix.asset_name }}
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
+          files: ${{ matrix.asset_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

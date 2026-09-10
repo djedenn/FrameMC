@@ -1,11 +1,12 @@
 # Getting Started with FrameMC
 
-Getting FrameMC running takes about two minutes. Because it compiles to a standalone native binary, there's no Java installation to worry about, no classpath arguments to pass, and no tuning JVM garbage collectors before you start.
+Getting FrameMC running takes less than a minute. FrameMC is distributed as a single, self-bootstrapping native binary: there is no Java runtime to install, no classpath to configure, and zero JVM garbage collection tuning.
 
 ## Table of Contents
+- [Quick Start (Single-Binary Setup)](#quick-start-single-binary-setup)
+- [Automatic First-Run Bootstrapping](#automatic-first-run-bootstrapping)
 - [System Requirements](#system-requirements)
-- [Building from Source](#building-from-source)
-- [First Run & Bootstrapping](#first-run--bootstrapping)
+- [Building from Source (Optional)](#building-from-source-optional)
 - [CLI Options & Flags](#cli-options--flags)
 - [Connecting Your First Backend](#connecting-your-first-backend)
   - [Recommended Port Layout](#recommended-port-layout)
@@ -20,6 +21,56 @@ Getting FrameMC running takes about two minutes. Because it compiles to a standa
 
 ---
 
+## Quick Start (Single-Binary Setup)
+
+The simplest way to run FrameMC:
+
+### 1. Download the Executable
+Grab the standalone binary for your architecture from the [GitHub Releases](https://github.com/djedenn/FrameMC/releases/latest) page:
+- **Windows**: `framemc.exe`
+- **Linux**: `framemc-linux-x86_64`
+- **macOS**: `framemc-macos-aarch64` (Apple Silicon M1/M2/M3/M4) or `framemc-macos-x86_64` (Intel)
+
+### 2. Place in an Empty Folder & Run
+```bash
+# Linux
+chmod +x framemc-linux-x86_64
+./framemc-linux-x86_64
+
+# macOS
+chmod +x framemc-macos-*
+./framemc-macos-aarch64    # or ./framemc-macos-x86_64
+
+# Windows
+.\framemc.exe
+```
+
+That's it! FrameMC is completely self-bootstrapping and generates all configuration and script files automatically on initial launch.
+
+---
+
+## Automatic First-Run Bootstrapping
+
+When launched in an empty directory without existing configuration files, FrameMC creates everything required:
+
+1. **`config.toml`**: Fully documented configuration template with listener on port `25565` and default routes to backend `lobby` (`127.0.0.1:25566`).
+2. **`server-icon.png`**: High-resolution 64×64 server favicon encoded into server status ping packets.
+3. **`scripts/main.rhai`**: Default event hooks for authentication, join routing, and command handling.
+4. **`plugins/server_switcher.rhai`**: Standalone `/server` command plugin for seamless cross-server switching and tab completion.
+
+Startup logs verify that all components are loaded:
+
+```text
+2026-09-10T21:40:00Z  INFO framemc: Starting FrameMC Minecraft Proxy using config: config.toml
+2026-09-10T21:40:00Z  INFO framemc: Loaded 1 plugin(s) from 'plugins'
+2026-09-10T21:40:00Z  INFO framemc: Loaded script at 'scripts/main.rhai'
+2026-09-10T21:40:00Z  INFO framemc::network::listener: FrameMC listener bound to 0.0.0.0:25565 (online_mode: true)
+```
+
+Point your Minecraft client (1.20.4 – 1.21.4+) to `127.0.0.1:25565` to connect.
+
+---
+
 ## System Requirements
 
 FrameMC doesn't depend on an external runtime or shared C libraries. It runs as a self-contained executable:
@@ -27,69 +78,33 @@ FrameMC doesn't depend on an external runtime or shared C libraries. It runs as 
 - **Operating System**: 64-bit Linux (glibc 2.17+ or musl), Windows 10/11/Server, or macOS 12+ (Apple Silicon or Intel).
 - **Memory footprint**: ~15 MB RSS baseline. Unlike Java proxies that hold onto hundreds of megabytes for heap pools and GC metadata, FrameMC runs comfortably on a 512 MB VPS alongside other services.
 - **CPU**: Any modern x86_64 or aarch64 core. If your x86_64 CPU supports SSE4.2 and AES-NI, encryption handshakes run with hardware acceleration.
-- **Build Toolchain**: Rust 1.80 or newer (`rustc` and `cargo`). Check your installed version with `rustc --version`.
 
 ---
 
-## Building from Source
+## Building from Source (Optional)
 
-Building locally takes roughly two minutes on a modern quad-core machine.
+If you prefer compiling locally from source instead of downloading pre-built binaries:
 
-### 1. Grab the repository
+### 1. Requirements
+- [Rust 1.80+](https://www.rust-lang.org/tools/install) (stable toolchain)
+- Cargo
 
+### 2. Clone & Compile
 ```bash
 git clone https://github.com/djedenn/FrameMC.git
 cd FrameMC
-```
-
-### 2. Compile a release build
-
-Always compile with `--release`. Unoptimized debug builds include heavy runtime assertions and skip link-time optimization, which severely hurts AES cipher throughput and VarInt parsing speeds.
-
-```bash
 cargo build --release
 ```
 
-Once Cargo finishes compiling dependencies (Tokio, Rhai, RSA, Flate2), the compiled binary is located at:
+The compiled binary will be located at:
 - **Linux / macOS**: `target/release/framemc`
 - **Windows**: `target\release\framemc.exe`
 
-### 3. Verify the build locally
-
-Before deploying, run the test suite to confirm your local platform passes all wire-level protocol checks:
-
+### 3. Run Automated Tests
 ```bash
 cargo test --all-targets
 ```
-
-All 152 tests should pass cleanly without ignored or failing cases.
-
----
-
-## First Run & Bootstrapping
-
-Starting FrameMC without existing config files takes one command:
-
-```bash
-# On Linux / macOS
-./target/release/framemc
-
-# On Windows
-.\target\release\framemc.exe
-```
-
-If no `config.toml` exists in the current directory, FrameMC writes out a documented starter template and binds to `0.0.0.0:25565`.
-
-Startup logs look like this:
-
-```text
-2026-09-08T14:20:00Z  INFO framemc: Starting FrameMC Minecraft Proxy using config: config.toml
-2026-09-08T14:20:00Z  INFO framemc: Loaded 1 plugin(s) from 'plugins'
-2026-09-08T14:20:00Z  INFO framemc: Loaded script at 'scripts/main.rhai'
-2026-09-08T14:20:00Z  INFO framemc::network::listener: FrameMC listener bound to 0.0.0.0:25565 (online_mode: true)
-```
-
-At this point, the proxy is live and waiting for incoming Minecraft client connections.
+All 153 tests should pass cleanly without ignored or failing cases.
 
 ---
 
