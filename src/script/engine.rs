@@ -57,7 +57,10 @@ impl ScriptHost {
 
         let servers_clone = Arc::clone(&servers);
         engine.register_fn("get_servers", move || -> rhai::Array {
-            let guard = servers_clone.read().unwrap();
+            let guard = match servers_clone.read() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             guard
                 .iter()
                 .map(|s| rhai::Dynamic::from(s.clone()))
@@ -66,12 +69,18 @@ impl ScriptHost {
 
         let default_clone = Arc::clone(&default_server);
         engine.register_fn("get_default_server", move || -> String {
-            default_clone.read().unwrap().clone()
+            match default_clone.read() {
+                Ok(g) => g.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            }
         });
 
         let servers_exists = Arc::clone(&servers);
         engine.register_fn("server_exists", move |name: &str| -> bool {
-            let guard = servers_exists.read().unwrap();
+            let guard = match servers_exists.read() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             guard.iter().any(|s| s.eq_ignore_ascii_case(name))
         });
 

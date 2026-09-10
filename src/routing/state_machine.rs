@@ -30,6 +30,30 @@ pub const RESPAWN_PACKET_ID: i32 = 0x45;
 /// Packet ID for client-bound system chat message in Play state (1.20.2 - 1.20.4).
 pub const SYSTEM_CHAT_MESSAGE_PACKET_ID: i32 = 0x69;
 
+/// Packet ID for client-bound close container packet in Play state (1.20.2 - 1.21.4).
+pub const CLOSE_CONTAINER_PACKET_ID: i32 = 0x12;
+
+/// Packet ID for client-bound stop sound packet in Play state (1.20.2).
+pub const STOP_SOUND_PACKET_ID: i32 = 0x66;
+
+/// Packet ID for client-bound boss bar packet in Play state (1.20.2 - 1.21.4).
+pub const BOSS_BAR_PACKET_ID: i32 = 0x0A;
+
+/// Packet ID for client-bound scoreboard objective packet in Play state (1.20.2).
+pub const SCOREBOARD_OBJECTIVE_PACKET_ID: i32 = 0x5A;
+
+/// Packet ID for client-bound display objective packet in Play state (1.20.2).
+pub const DISPLAY_OBJECTIVE_PACKET_ID: i32 = 0x53;
+
+/// Respawn `data_to_keep` flag: keep attributes.
+pub const KEEP_ATTRIBUTES: u8 = 0x01;
+
+/// Respawn `data_to_keep` flag: keep entity metadata.
+pub const KEEP_METADATA: u8 = 0x02;
+
+/// Respawn `data_to_keep` flag: keep both attributes and metadata (0x01 | 0x02).
+pub const KEEP_ALL_DATA: u8 = KEEP_ATTRIBUTES | KEEP_METADATA;
+
 /// Stream trait representing any bidirectional asynchronous stream.
 pub trait AsyncStream: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncStream for T {}
@@ -141,9 +165,7 @@ impl ServerboundChatCommand {
     }
 
     pub fn is_command_packet(id: i32, protocol_version: i32) -> bool {
-        if protocol_version >= 775 {
-            id == 0x07 || id == 0x08 || id == 0x09
-        } else if protocol_version >= 768 {
+        if protocol_version >= 768 {
             id == 0x05 || id == 0x06 || id == 0x07
         } else if protocol_version >= 766 {
             id == 0x04 || id == 0x05 || id == 0x06
@@ -192,9 +214,7 @@ impl ServerboundChatCommand {
     }
 
     pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
-        let packet_id = if protocol_version >= 775 {
-            0x07
-        } else if protocol_version >= 768 {
+        let packet_id = if protocol_version >= 768 {
             0x05
         } else if protocol_version >= 766 {
             0x04
@@ -807,9 +827,10 @@ pub fn is_login_play_packet(id: i32, protocol_version: i32) -> bool {
 /// Extracting this worldState directly preserves the backend's exact dimension registry index,
 /// dimension name identifier, seed, gamemode, and sea level, ensuring zero client ghost collisions
 /// or desync upon server transfers.
-pub fn extract_respawn_from_login(
+pub fn extract_respawn_from_login_with_data_kept(
     login_pkt: &RawPacket,
     protocol_version: i32,
+    data_to_keep: u8,
 ) -> Option<RawPacket> {
     if protocol_version >= 766 {
         let mut cursor = &login_pkt.payload[..];
@@ -935,16 +956,141 @@ pub fn extract_respawn_from_login(
         let spawn_info_end = login_pkt.payload.len() - cursor.remaining();
         let spawn_info = &login_pkt.payload[spawn_info_start..spawn_info_end];
 
-        // Respawn packet is SpawnInfo + dataToKeep: u8 (0x00 = reset entities & world)
+        // Respawn packet is SpawnInfo + dataToKeep: u8
         let mut respawn_payload = BytesMut::with_capacity(spawn_info.len() + 1);
         respawn_payload.put_slice(spawn_info);
-        respawn_payload.put_u8(0x00); // copyMetadata = 0
+        respawn_payload.put_u8(data_to_keep);
 
         let respawn_id = RespawnPacket::packet_id_for_version(protocol_version);
         Some(RawPacket::new(respawn_id, respawn_payload.freeze()))
+    } else if protocol_version >= 764 {
+        let mut cursor = &login_pkt.payload[..];
+        // 1. entity_id (4 bytes i32)
+        if cursor.remaining() < 4 {
+            return None;
+        }
+        cursor.advance(4);
+
+        // 2. is_hardcore (1 byte bool)
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        cursor.advance(1);
+
+        // 3. dimension_names (VarInt count + strings)
+        let dim_count = decode_varint(&mut cursor).ok()?;
+        if !(0..=1024).contains(&dim_count) {
+            return None;
+        }
+        for _ in 0..dim_count {
+            let str_len = decode_varint(&mut cursor).ok()?;
+            if str_len < 0 || cursor.remaining() < str_len as usize {
+                return None;
+            }
+            cursor.advance(str_len as usize);
+        }
+
+        // 4. max_players (VarInt)
+        decode_varint(&mut cursor).ok()?;
+
+        // 5. view_distance (VarInt)
+        decode_varint(&mut cursor).ok()?;
+
+        // 6. simulation_distance (VarInt)
+        decode_varint(&mut cursor).ok()?;
+
+        // 7. reduced_debug_info (1 byte bool)
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        cursor.advance(1);
+
+        // 8. show_respawn_screen (1 byte bool)
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        cursor.advance(1);
+
+        // 9. do_limited_crafting (1 byte bool)
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        cursor.advance(1);
+
+        // In 1.20.2 - 1.20.4 (protocols 764-765), SpawnInfo fields:
+        // 1. dimension_type: String
+        let dt_len = decode_varint(&mut cursor).ok()?;
+        if dt_len < 0 || cursor.remaining() < dt_len as usize {
+            return None;
+        }
+        let dimension_type = std::str::from_utf8(&cursor[..dt_len as usize])
+            .ok()?
+            .to_string();
+        cursor.advance(dt_len as usize);
+
+        // 2. dimension_name: String
+        let dn_len = decode_varint(&mut cursor).ok()?;
+        if dn_len < 0 || cursor.remaining() < dn_len as usize {
+            return None;
+        }
+        let dimension_name = std::str::from_utf8(&cursor[..dn_len as usize])
+            .ok()?
+            .to_string();
+        cursor.advance(dn_len as usize);
+
+        // 3. hashed_seed: i64
+        if cursor.remaining() < 8 {
+            return None;
+        }
+        let hashed_seed = cursor.get_i64();
+
+        // 4. gamemode: u8
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        let gamemode = cursor.get_u8();
+
+        // 5. previous_gamemode: i8
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        let previous_gamemode = cursor.get_i8();
+
+        // 6. is_debug: bool
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        let is_debug = cursor.get_u8() != 0;
+
+        // 7. is_flat: bool
+        if cursor.remaining() < 1 {
+            return None;
+        }
+        let is_flat = cursor.get_u8() != 0;
+
+        let respawn = RespawnPacket {
+            dimension_type,
+            dimension_name,
+            hashed_seed,
+            gamemode,
+            previous_gamemode,
+            is_debug,
+            is_flat,
+            data_kept: data_to_keep,
+        };
+        Some(respawn.encode_with_version(protocol_version))
     } else {
-        Some(RespawnPacket::default_reset().encode_with_version(protocol_version))
+        let mut reset = RespawnPacket::default_reset();
+        reset.data_kept = data_to_keep;
+        Some(reset.encode_with_version(protocol_version))
     }
+}
+
+pub fn extract_respawn_from_login(
+    login_pkt: &RawPacket,
+    protocol_version: i32,
+) -> Option<RawPacket> {
+    extract_respawn_from_login_with_data_kept(login_pkt, protocol_version, 0x00)
 }
 
 /// Returns true if the packet ID corresponds to the clientbound DeclareCommands packet.
@@ -1300,6 +1446,460 @@ impl SystemChatMessagePacket {
     }
 }
 
+/// Client-bound Close Container / Window packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseContainerPacket {
+    pub window_id: u8,
+}
+
+impl CloseContainerPacket {
+    pub fn new(window_id: u8) -> Self {
+        Self { window_id }
+    }
+
+    pub fn packet_id_for_version(protocol_version: i32) -> i32 {
+        if protocol_version >= 764 {
+            CLOSE_CONTAINER_PACKET_ID
+        } else if protocol_version >= 762 {
+            0x11
+        } else if protocol_version == 761 {
+            0x0F
+        } else if protocol_version >= 759 {
+            0x10
+        } else {
+            CLOSE_CONTAINER_PACKET_ID
+        }
+    }
+
+    pub fn encode(&self) -> RawPacket {
+        self.encode_with_version(765)
+    }
+
+    pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
+        let id = Self::packet_id_for_version(protocol_version);
+        let mut payload = BytesMut::with_capacity(1);
+        payload.put_u8(self.window_id);
+        RawPacket::new(id, payload.freeze())
+    }
+
+    pub fn decode(packet: &RawPacket, protocol_version: i32) -> Result<Self, ProxyError> {
+        let expected = Self::packet_id_for_version(protocol_version);
+        if packet.id != expected {
+            return Err(ProxyError::InvalidPacketId(packet.id));
+        }
+        let mut cursor = &packet.payload[..];
+        if cursor.remaining() < 1 {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading window_id in CloseContainer",
+            )));
+        }
+        let window_id = cursor.get_u8();
+        Ok(Self { window_id })
+    }
+}
+
+/// Client-bound Stop Sound packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopSoundPacket {
+    pub flags: u8,
+    pub source: Option<i32>,
+    pub sound: Option<String>,
+}
+
+impl StopSoundPacket {
+    pub fn all() -> Self {
+        Self {
+            flags: 0,
+            source: None,
+            sound: None,
+        }
+    }
+
+    pub fn with_source(source: i32) -> Self {
+        Self {
+            flags: 1,
+            source: Some(source),
+            sound: None,
+        }
+    }
+
+    pub fn with_sound(sound: impl Into<String>) -> Self {
+        Self {
+            flags: 2,
+            source: None,
+            sound: Some(sound.into()),
+        }
+    }
+
+    pub fn with_source_and_sound(source: i32, sound: impl Into<String>) -> Self {
+        Self {
+            flags: 3,
+            source: Some(source),
+            sound: Some(sound.into()),
+        }
+    }
+
+    pub fn packet_id_for_version(protocol_version: i32) -> i32 {
+        if protocol_version >= 768 {
+            0x71
+        } else if protocol_version >= 766 {
+            0x6A
+        } else if protocol_version >= 765 {
+            0x68
+        } else if protocol_version >= 764 {
+            STOP_SOUND_PACKET_ID
+        } else if protocol_version >= 762 {
+            0x63
+        } else if protocol_version == 761 {
+            0x5F
+        } else if protocol_version >= 759 {
+            0x61
+        } else {
+            STOP_SOUND_PACKET_ID
+        }
+    }
+
+    pub fn encode(&self) -> RawPacket {
+        self.encode_with_version(765)
+    }
+
+    pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
+        let id = Self::packet_id_for_version(protocol_version);
+        let mut payload = BytesMut::new();
+        payload.put_u8(self.flags);
+        if self.flags & 1 != 0 {
+            if let Some(src) = self.source {
+                encode_varint(src, &mut payload);
+            }
+        }
+        if self.flags & 2 != 0 {
+            if let Some(ref snd) = self.sound {
+                encode_varint(snd.len() as i32, &mut payload);
+                payload.put_slice(snd.as_bytes());
+            }
+        }
+        RawPacket::new(id, payload.freeze())
+    }
+
+    pub fn decode(packet: &RawPacket, protocol_version: i32) -> Result<Self, ProxyError> {
+        let expected = Self::packet_id_for_version(protocol_version);
+        if packet.id != expected {
+            return Err(ProxyError::InvalidPacketId(packet.id));
+        }
+        let mut cursor = &packet.payload[..];
+        if cursor.remaining() < 1 {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading flags in StopSound",
+            )));
+        }
+        let flags = cursor.get_u8();
+        let source = if flags & 1 != 0 {
+            Some(decode_varint(&mut cursor)?)
+        } else {
+            None
+        };
+        let sound = if flags & 2 != 0 {
+            let len = decode_varint(&mut cursor)?;
+            if len < 0 || cursor.remaining() < len as usize {
+                return Err(ProxyError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Unexpected EOF reading sound in StopSound",
+                )));
+            }
+            let s = std::str::from_utf8(&cursor[..len as usize])
+                .map_err(|_| {
+                    ProxyError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid UTF-8 in sound",
+                    ))
+                })?
+                .to_string();
+            cursor.advance(len as usize);
+            Some(s)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            flags,
+            source,
+            sound,
+        })
+    }
+}
+
+/// Client-bound Boss Bar packet (used for synchronization and clean removal on transfer).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BossBarPacket {
+    pub uuid: [u8; 16],
+    pub action: i32,
+}
+
+impl BossBarPacket {
+    pub const ACTION_ADD: i32 = 0;
+    pub const ACTION_REMOVE: i32 = 1;
+    pub const ACTION_UPDATE_HEALTH: i32 = 2;
+    pub const ACTION_UPDATE_TITLE: i32 = 3;
+    pub const ACTION_UPDATE_STYLE: i32 = 4;
+    pub const ACTION_UPDATE_FLAGS: i32 = 5;
+
+    pub fn remove(uuid: [u8; 16]) -> Self {
+        Self {
+            uuid,
+            action: Self::ACTION_REMOVE,
+        }
+    }
+
+    pub fn packet_id_for_version(protocol_version: i32) -> i32 {
+        if protocol_version >= 764 {
+            BOSS_BAR_PACKET_ID
+        } else if protocol_version >= 762 {
+            0x0B
+        } else {
+            BOSS_BAR_PACKET_ID
+        }
+    }
+
+    pub fn encode(&self) -> RawPacket {
+        self.encode_with_version(765)
+    }
+
+    pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
+        let id = Self::packet_id_for_version(protocol_version);
+        let mut payload = BytesMut::with_capacity(17);
+        payload.put_slice(&self.uuid);
+        encode_varint(self.action, &mut payload);
+        RawPacket::new(id, payload.freeze())
+    }
+
+    pub fn decode(packet: &RawPacket, protocol_version: i32) -> Result<Self, ProxyError> {
+        let expected = Self::packet_id_for_version(protocol_version);
+        if packet.id != expected {
+            return Err(ProxyError::InvalidPacketId(packet.id));
+        }
+        let mut cursor = &packet.payload[..];
+        if cursor.remaining() < 16 {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading UUID in BossBar",
+            )));
+        }
+        let mut uuid = [0u8; 16];
+        cursor.copy_to_slice(&mut uuid);
+        let action = decode_varint(&mut cursor)?;
+        Ok(Self { uuid, action })
+    }
+}
+
+/// Client-bound Scoreboard Objective packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoreboardObjectivePacket {
+    pub name: String,
+    pub action: u8,
+}
+
+impl ScoreboardObjectivePacket {
+    pub const ACTION_CREATE: u8 = 0;
+    pub const ACTION_REMOVE: u8 = 1;
+    pub const ACTION_UPDATE_DISPLAY_TEXT: u8 = 2;
+
+    pub fn remove(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            action: Self::ACTION_REMOVE,
+        }
+    }
+
+    pub fn packet_id_for_version(protocol_version: i32) -> i32 {
+        if protocol_version >= 768 {
+            0x64
+        } else if protocol_version >= 766 {
+            0x5E
+        } else if protocol_version >= 765 {
+            0x5C
+        } else if protocol_version >= 764 {
+            SCOREBOARD_OBJECTIVE_PACKET_ID
+        } else if protocol_version >= 762 {
+            0x58
+        } else if protocol_version == 761 {
+            0x54
+        } else {
+            0x56
+        }
+    }
+
+    pub fn encode(&self) -> RawPacket {
+        self.encode_with_version(765)
+    }
+
+    pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
+        let id = Self::packet_id_for_version(protocol_version);
+        let mut payload = BytesMut::new();
+        encode_varint(self.name.len() as i32, &mut payload);
+        payload.put_slice(self.name.as_bytes());
+        payload.put_u8(self.action);
+        RawPacket::new(id, payload.freeze())
+    }
+
+    pub fn decode(packet: &RawPacket, protocol_version: i32) -> Result<Self, ProxyError> {
+        let expected = Self::packet_id_for_version(protocol_version);
+        if packet.id != expected {
+            return Err(ProxyError::InvalidPacketId(packet.id));
+        }
+        let mut cursor = &packet.payload[..];
+        let len = decode_varint(&mut cursor)?;
+        if len < 0 || cursor.remaining() < len as usize {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading name in ScoreboardObjective",
+            )));
+        }
+        let name = std::str::from_utf8(&cursor[..len as usize])
+            .map_err(|_| {
+                ProxyError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid UTF-8 in ScoreboardObjective name",
+                ))
+            })?
+            .to_string();
+        cursor.advance(len as usize);
+        if cursor.remaining() < 1 {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading action in ScoreboardObjective",
+            )));
+        }
+        let action = cursor.get_u8();
+        Ok(Self { name, action })
+    }
+}
+
+/// Client-bound Set Display Objective packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayObjectivePacket {
+    pub position: i32,
+    pub name: String,
+}
+
+impl DisplayObjectivePacket {
+    pub const POSITION_LIST: i32 = 0;
+    pub const POSITION_SIDEBAR: i32 = 1;
+    pub const POSITION_BELOW_NAME: i32 = 2;
+
+    pub fn clear(position: i32) -> Self {
+        Self {
+            position,
+            name: String::new(),
+        }
+    }
+
+    pub fn packet_id_for_version(protocol_version: i32) -> i32 {
+        if protocol_version >= 768 {
+            0x5C
+        } else if protocol_version >= 766 {
+            0x57
+        } else if protocol_version >= 765 {
+            0x55
+        } else if protocol_version >= 764 {
+            DISPLAY_OBJECTIVE_PACKET_ID
+        } else if protocol_version >= 762 {
+            0x51
+        } else if protocol_version == 761 {
+            0x4D
+        } else {
+            0x4F
+        }
+    }
+
+    pub fn encode(&self) -> RawPacket {
+        self.encode_with_version(765)
+    }
+
+    pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
+        let id = Self::packet_id_for_version(protocol_version);
+        let mut payload = BytesMut::new();
+        encode_varint(self.position, &mut payload);
+        encode_varint(self.name.len() as i32, &mut payload);
+        payload.put_slice(self.name.as_bytes());
+        RawPacket::new(id, payload.freeze())
+    }
+
+    pub fn decode(packet: &RawPacket, protocol_version: i32) -> Result<Self, ProxyError> {
+        let expected = Self::packet_id_for_version(protocol_version);
+        if packet.id != expected {
+            return Err(ProxyError::InvalidPacketId(packet.id));
+        }
+        let mut cursor = &packet.payload[..];
+        let position = decode_varint(&mut cursor)?;
+        let len = decode_varint(&mut cursor)?;
+        if len < 0 || cursor.remaining() < len as usize {
+            return Err(ProxyError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Unexpected EOF reading name in DisplayObjective",
+            )));
+        }
+        let name = std::str::from_utf8(&cursor[..len as usize])
+            .map_err(|_| {
+                ProxyError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid UTF-8 in DisplayObjective name",
+                ))
+            })?
+            .to_string();
+        cursor.advance(len as usize);
+        Ok(Self { position, name })
+    }
+}
+
+/// Returns true if the packet ID corresponds to clientbound Open Screen / Window.
+pub fn is_open_window_packet(id: i32, protocol_version: i32) -> bool {
+    if protocol_version >= 768 {
+        id == 0x35
+    } else if protocol_version >= 766 {
+        id == 0x33
+    } else if protocol_version >= 764 {
+        id == 0x31
+    } else if protocol_version >= 762 {
+        id == 0x30
+    } else if protocol_version == 761 {
+        id == 0x2D
+    } else {
+        id == 0x2E
+    }
+}
+
+/// Returns true if the packet ID corresponds to clientbound sound effects.
+pub fn is_sound_packet(id: i32, protocol_version: i32) -> bool {
+    if protocol_version >= 768 {
+        id == 0x6F || id == 0x6E
+    } else if protocol_version >= 766 {
+        id == 0x68 || id == 0x67
+    } else if protocol_version >= 765 {
+        id == 0x66 || id == 0x65
+    } else if protocol_version >= 764 {
+        id == 0x64 || id == 0x63
+    } else {
+        id == 0x61 || id == 0x60
+    }
+}
+
+/// Returns true if the packet ID corresponds to serverbound Close Container / Window.
+pub fn is_serverbound_close_container_packet(id: i32, protocol_version: i32) -> bool {
+    if protocol_version >= 768 {
+        id == 0x11
+    } else if protocol_version >= 766 {
+        id == 0x0F
+    } else if protocol_version >= 764 {
+        id == 0x0E
+    } else if protocol_version >= 762 {
+        id == 0x0D
+    } else {
+        id == 0x0C || id == 0x0A || id == 0x09
+    }
+}
+
 /// State tracking an authenticated player session during routing.
 #[derive(Debug, Clone)]
 pub struct PlayerSession {
@@ -1342,6 +1942,11 @@ pub struct PlayStateMachine {
     /// Backwards-compatible alias for client_compression_threshold
     pub compression_threshold: Option<usize>,
     pub server_transferred: bool,
+    pub open_container_id: Option<u8>,
+    pub has_active_audio: bool,
+    pub active_boss_bars: std::collections::HashSet<[u8; 16]>,
+    pub active_scoreboard_objectives: std::collections::HashSet<String>,
+    pub active_display_slots: std::collections::HashSet<i32>,
 }
 
 impl PlayStateMachine {
@@ -1365,6 +1970,11 @@ impl PlayStateMachine {
             backend_compression_threshold: compression_threshold,
             compression_threshold,
             server_transferred: false,
+            open_container_id: None,
+            has_active_audio: false,
+            active_boss_bars: std::collections::HashSet::new(),
+            active_scoreboard_objectives: std::collections::HashSet::new(),
+            active_display_slots: std::collections::HashSet::new(),
         }
     }
 
@@ -1390,6 +2000,11 @@ impl PlayStateMachine {
             backend_compression_threshold,
             compression_threshold: client_compression_threshold,
             server_transferred: false,
+            open_container_id: None,
+            has_active_audio: false,
+            active_boss_bars: std::collections::HashSet::new(),
+            active_scoreboard_objectives: std::collections::HashSet::new(),
+            active_display_slots: std::collections::HashSet::new(),
         }
     }
 
@@ -1636,10 +2251,13 @@ impl PlayStateMachine {
             }
         }
 
-        // 3. Safely terminate connection to previous backend
+        // 3. Safely terminate connection to previous backend and clean up client state from old server
         if let Some(mut old_backend) = self.backend.take() {
             let _ = tokio::io::AsyncWriteExt::shutdown(&mut old_backend).await;
         }
+
+        // Clean up client state from old server (screen, audio, scoreboard, bossbar)
+        let _ = self.teardown_transferred_state().await;
 
         // 4. Reattach streams, update current server, and mark transfer pending Login (Play) [R-11]
         self.backend = Some(new_backend);
@@ -1663,6 +2281,10 @@ impl PlayStateMachine {
         if is_protected_plugin_channel(&packet) {
             tracing::warn!("Dropping client packet on protected channel");
             return Ok(true);
+        }
+
+        if is_serverbound_close_container_packet(packet.id, self.session.protocol_version) {
+            self.open_container_id = None;
         }
 
         let is_command_packet =
@@ -1809,6 +2431,66 @@ impl PlayStateMachine {
             return Ok(true);
         }
 
+        // Track open container window ID if backend opens a screen
+        if is_open_window_packet(packet.id, self.session.protocol_version) {
+            let mut cursor = &packet.payload[..];
+            if let Ok(win_id) = decode_varint(&mut cursor) {
+                self.open_container_id = Some(win_id as u8);
+            }
+        } else if packet.id
+            == CloseContainerPacket::packet_id_for_version(self.session.protocol_version)
+        {
+            self.open_container_id = None;
+        }
+
+        // Track sound packets to know if audio cleanup is necessary on transfer
+        if is_sound_packet(packet.id, self.session.protocol_version) {
+            self.has_active_audio = true;
+        } else if packet.id == StopSoundPacket::packet_id_for_version(self.session.protocol_version)
+            && packet.payload.first().copied() == Some(0)
+        {
+            self.has_active_audio = false;
+        }
+
+        // Track active boss bars
+        if packet.id == BossBarPacket::packet_id_for_version(self.session.protocol_version) {
+            if let Ok(bb) = BossBarPacket::decode(&packet, self.session.protocol_version) {
+                if bb.action == BossBarPacket::ACTION_ADD {
+                    self.active_boss_bars.insert(bb.uuid);
+                } else if bb.action == BossBarPacket::ACTION_REMOVE {
+                    self.active_boss_bars.remove(&bb.uuid);
+                }
+            }
+        }
+
+        // Track active scoreboard objectives
+        if packet.id
+            == ScoreboardObjectivePacket::packet_id_for_version(self.session.protocol_version)
+        {
+            if let Ok(obj) =
+                ScoreboardObjectivePacket::decode(&packet, self.session.protocol_version)
+            {
+                if obj.action == ScoreboardObjectivePacket::ACTION_CREATE {
+                    self.active_scoreboard_objectives.insert(obj.name);
+                } else if obj.action == ScoreboardObjectivePacket::ACTION_REMOVE {
+                    self.active_scoreboard_objectives.remove(&obj.name);
+                }
+            }
+        }
+
+        // Track active display objective slots (e.g. sidebar, list, below_name)
+        if packet.id == DisplayObjectivePacket::packet_id_for_version(self.session.protocol_version)
+        {
+            if let Ok(disp) = DisplayObjectivePacket::decode(&packet, self.session.protocol_version)
+            {
+                if disp.name.is_empty() {
+                    self.active_display_slots.remove(&disp.position);
+                } else {
+                    self.active_display_slots.insert(disp.position);
+                }
+            }
+        }
+
         // Disconnect packet in Play state is typically 0x1A or 0x1B
         let is_disconnect = packet.id == 0x1A || packet.id == 0x1B;
         if is_disconnect {
@@ -1861,16 +2543,26 @@ impl PlayStateMachine {
             let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
 
             // If this is following a mid-session server transfer, immediately follow Login (Play)
-            // with a client-bound Respawn packet matching the new world state with copyMetadata = 0 [R-11].
-            // This clears previous chunk collision meshes and resets player physics in the Minecraft client.
+            // with a client-bound Respawn packet matching the new world state [R-11].
+            // Modern protocols (>= 764) preserve player attributes (0x01) and metadata (0x02) via
+            // KEEP_ALL_DATA (0x03) to completely prevent the death/dirt loading screen flash.
             if self.server_transferred {
                 self.server_transferred = false;
-                let respawn_pkt =
-                    extract_respawn_from_login(&packet, self.session.protocol_version)
-                        .unwrap_or_else(|| {
-                            RespawnPacket::default_reset()
-                                .encode_with_version(self.session.protocol_version)
-                        });
+                let data_kept = if self.session.protocol_version >= 764 {
+                    KEEP_ALL_DATA
+                } else {
+                    0x01
+                };
+                let respawn_pkt = extract_respawn_from_login_with_data_kept(
+                    &packet,
+                    self.session.protocol_version,
+                    data_kept,
+                )
+                .unwrap_or_else(|| {
+                    let mut reset = RespawnPacket::default_reset();
+                    reset.data_kept = data_kept;
+                    reset.encode_with_version(self.session.protocol_version)
+                });
                 write_packet_with_compression(
                     &mut self.client,
                     &respawn_pkt,
@@ -1881,6 +2573,7 @@ impl PlayStateMachine {
                 tracing::info!(
                     player = %self.session.profile.name,
                     server = %self.session.current_server,
+                    data_kept = data_kept,
                     "Dispatched matching Respawn packet to client following server transfer"
                 );
             }
@@ -1946,6 +2639,100 @@ impl PlayStateMachine {
         } else {
             Ok(false)
         }
+    }
+
+    /// Forcefully closes any open container GUI on the client.
+    pub async fn sanitize_screen(&mut self, window_id: u8) -> Result<(), ProxyError> {
+        self.open_container_id = None;
+        let pkt =
+            CloseContainerPacket::new(window_id).encode_with_version(self.session.protocol_version);
+        write_packet_with_compression(&mut self.client, &pkt, self.client_compression_threshold)
+            .await?;
+        tokio::io::AsyncWriteExt::flush(&mut self.client).await?;
+        Ok(())
+    }
+
+    /// Stops all audio playing on the client by sending a StopSound packet.
+    pub async fn stop_audio(&mut self) -> Result<(), ProxyError> {
+        self.has_active_audio = false;
+        let pkt = StopSoundPacket::all().encode_with_version(self.session.protocol_version);
+        write_packet_with_compression(&mut self.client, &pkt, self.client_compression_threshold)
+            .await?;
+        tokio::io::AsyncWriteExt::flush(&mut self.client).await?;
+        Ok(())
+    }
+
+    /// Clears an active scoreboard display slot (e.g. sidebar, list, below_name) on the client.
+    pub async fn clear_display_objective(&mut self, position: i32) -> Result<(), ProxyError> {
+        self.active_display_slots.remove(&position);
+        let pkt = DisplayObjectivePacket::clear(position)
+            .encode_with_version(self.session.protocol_version);
+        write_packet_with_compression(&mut self.client, &pkt, self.client_compression_threshold)
+            .await?;
+        tokio::io::AsyncWriteExt::flush(&mut self.client).await?;
+        Ok(())
+    }
+
+    /// Resets lingering server-side state (container GUIs, audio loops, scoreboards, bossbars).
+    pub async fn teardown_transferred_state(&mut self) -> Result<(), ProxyError> {
+        if let Some(window_id) = self.open_container_id.take() {
+            let close_pkt = CloseContainerPacket::new(window_id)
+                .encode_with_version(self.session.protocol_version);
+            let _ = write_packet_with_compression(
+                &mut self.client,
+                &close_pkt,
+                self.client_compression_threshold,
+            )
+            .await;
+        }
+
+        if self.has_active_audio {
+            self.has_active_audio = false;
+            let stop_sound_pkt =
+                StopSoundPacket::all().encode_with_version(self.session.protocol_version);
+            let _ = write_packet_with_compression(
+                &mut self.client,
+                &stop_sound_pkt,
+                self.client_compression_threshold,
+            )
+            .await;
+        }
+
+        for obj_name in self.active_scoreboard_objectives.drain() {
+            let remove_pkt = ScoreboardObjectivePacket::remove(&obj_name)
+                .encode_with_version(self.session.protocol_version);
+            let _ = write_packet_with_compression(
+                &mut self.client,
+                &remove_pkt,
+                self.client_compression_threshold,
+            )
+            .await;
+        }
+
+        for slot in self.active_display_slots.drain() {
+            let clear_pkt = DisplayObjectivePacket::clear(slot)
+                .encode_with_version(self.session.protocol_version);
+            let _ = write_packet_with_compression(
+                &mut self.client,
+                &clear_pkt,
+                self.client_compression_threshold,
+            )
+            .await;
+        }
+
+        for bossbar_uuid in self.active_boss_bars.drain() {
+            let remove_pkt = BossBarPacket::remove(bossbar_uuid)
+                .encode_with_version(self.session.protocol_version);
+            let _ = write_packet_with_compression(
+                &mut self.client,
+                &remove_pkt,
+                self.client_compression_threshold,
+            )
+            .await;
+        }
+
+        let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
+        Ok(())
     }
 
     /// Runs the Play state packet routing loop until disconnect or shutdown.
@@ -2214,9 +3001,9 @@ pub mod tests {
 
     #[test]
     fn test_command_packet_detection_across_protocols() {
+        assert!(ServerboundChatCommand::is_command_packet(0x05, 776));
+        assert!(ServerboundChatCommand::is_command_packet(0x06, 776));
         assert!(ServerboundChatCommand::is_command_packet(0x07, 776));
-        assert!(ServerboundChatCommand::is_command_packet(0x08, 776));
-        assert!(ServerboundChatCommand::is_command_packet(0x09, 776));
         assert!(!ServerboundChatCommand::is_command_packet(0x04, 776));
 
         assert!(ServerboundChatCommand::is_command_packet(0x05, 768));
@@ -3091,5 +3878,627 @@ pub mod tests {
             .expect("Read chat error");
         let chat = SystemChatMessagePacket::decode(&chat_raw).unwrap();
         assert!(chat.message.contains("connection timed out"));
+    }
+
+    #[test]
+    fn test_close_container_packet_codecs_across_versions() {
+        for proto in [759, 761, 762, 763, 764, 765, 766, 768, 775, 776] {
+            let pkt = CloseContainerPacket::new(5);
+            let raw = pkt.encode_with_version(proto);
+            assert_eq!(raw.id, CloseContainerPacket::packet_id_for_version(proto));
+            let decoded = CloseContainerPacket::decode(&raw, proto).expect("decode failed");
+            assert_eq!(decoded.window_id, 5);
+        }
+
+        assert_eq!(CloseContainerPacket::packet_id_for_version(776), 0x12);
+        assert_eq!(CloseContainerPacket::packet_id_for_version(775), 0x12);
+        assert_eq!(CloseContainerPacket::packet_id_for_version(768), 0x12);
+        assert_eq!(CloseContainerPacket::packet_id_for_version(765), 0x12);
+        assert_eq!(CloseContainerPacket::packet_id_for_version(761), 0x0F);
+
+        // Invalid packet ID returns error
+        let bad_raw = RawPacket::new(0x00, Bytes::from_static(&[5]));
+        assert!(CloseContainerPacket::decode(&bad_raw, 765).is_err());
+
+        // Empty payload returns error
+        let empty_raw = RawPacket::new(0x12, Bytes::new());
+        assert!(CloseContainerPacket::decode(&empty_raw, 765).is_err());
+    }
+
+    #[test]
+    fn test_stop_sound_packet_codecs_across_versions() {
+        for proto in [759, 761, 763, 764, 765, 766, 768, 775, 776] {
+            // Test all sounds stop
+            let stop_all = StopSoundPacket::all();
+            let raw_all = stop_all.encode_with_version(proto);
+            assert_eq!(raw_all.id, StopSoundPacket::packet_id_for_version(proto));
+            assert_eq!(&raw_all.payload[..], &[0x00]);
+            let dec_all = StopSoundPacket::decode(&raw_all, proto).expect("decode all failed");
+            assert_eq!(dec_all.flags, 0);
+            assert_eq!(dec_all.source, None);
+            assert_eq!(dec_all.sound, None);
+
+            // Test with source
+            let stop_src = StopSoundPacket::with_source(2);
+            let raw_src = stop_src.encode_with_version(proto);
+            let dec_src = StopSoundPacket::decode(&raw_src, proto).expect("decode source failed");
+            assert_eq!(dec_src.flags, 1);
+            assert_eq!(dec_src.source, Some(2));
+            assert_eq!(dec_src.sound, None);
+
+            // Test with sound identifier
+            let stop_snd = StopSoundPacket::with_sound("minecraft:music.game");
+            let raw_snd = stop_snd.encode_with_version(proto);
+            let dec_snd = StopSoundPacket::decode(&raw_snd, proto).expect("decode sound failed");
+            assert_eq!(dec_snd.flags, 2);
+            assert_eq!(dec_snd.source, None);
+            assert_eq!(dec_snd.sound.as_deref(), Some("minecraft:music.game"));
+
+            // Test with both source and sound identifier
+            let stop_both = StopSoundPacket::with_source_and_sound(1, "minecraft:ambient.cave");
+            let raw_both = stop_both.encode_with_version(proto);
+            let dec_both = StopSoundPacket::decode(&raw_both, proto).expect("decode both failed");
+            assert_eq!(dec_both.flags, 3);
+            assert_eq!(dec_both.source, Some(1));
+            assert_eq!(dec_both.sound.as_deref(), Some("minecraft:ambient.cave"));
+        }
+
+        assert_eq!(StopSoundPacket::packet_id_for_version(776), 0x71);
+        assert_eq!(StopSoundPacket::packet_id_for_version(768), 0x71);
+        assert_eq!(StopSoundPacket::packet_id_for_version(766), 0x6A);
+        assert_eq!(StopSoundPacket::packet_id_for_version(765), 0x68);
+        assert_eq!(StopSoundPacket::packet_id_for_version(764), 0x66);
+    }
+
+    #[test]
+    fn test_boss_bar_packet_codecs_across_versions() {
+        let test_uuid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        for proto in [760, 762, 764, 765, 768, 775, 776] {
+            let pkt = BossBarPacket::remove(test_uuid);
+            let raw = pkt.encode_with_version(proto);
+            assert_eq!(raw.id, BossBarPacket::packet_id_for_version(proto));
+            let decoded = BossBarPacket::decode(&raw, proto).expect("decode bossbar failed");
+            assert_eq!(decoded.uuid, test_uuid);
+            assert_eq!(decoded.action, BossBarPacket::ACTION_REMOVE);
+        }
+
+        assert_eq!(BossBarPacket::packet_id_for_version(776), 0x0A);
+        assert_eq!(BossBarPacket::packet_id_for_version(768), 0x0A);
+        assert_eq!(BossBarPacket::packet_id_for_version(763), 0x0B);
+
+        // Truncated UUID error
+        let truncated = RawPacket::new(0x0A, Bytes::from_static(&[1, 2, 3]));
+        assert!(BossBarPacket::decode(&truncated, 765).is_err());
+    }
+
+    #[test]
+    fn test_scoreboard_objective_codecs_across_versions() {
+        for proto in [759, 761, 763, 764, 765, 766, 768, 775, 776] {
+            let pkt = ScoreboardObjectivePacket::remove("sidebar_stats");
+            let raw = pkt.encode_with_version(proto);
+            assert_eq!(
+                raw.id,
+                ScoreboardObjectivePacket::packet_id_for_version(proto)
+            );
+            let decoded =
+                ScoreboardObjectivePacket::decode(&raw, proto).expect("decode scoreboard failed");
+            assert_eq!(decoded.name, "sidebar_stats");
+            assert_eq!(decoded.action, ScoreboardObjectivePacket::ACTION_REMOVE);
+        }
+
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(776), 0x64);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(768), 0x64);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(766), 0x5E);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(765), 0x5C);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(764), 0x5A);
+    }
+
+    #[test]
+    fn test_display_objective_codecs_across_versions() {
+        for proto in [759, 761, 763, 764, 765, 766, 768, 775, 776] {
+            let pkt = DisplayObjectivePacket::clear(DisplayObjectivePacket::POSITION_SIDEBAR);
+            let raw = pkt.encode_with_version(proto);
+            assert_eq!(raw.id, DisplayObjectivePacket::packet_id_for_version(proto));
+            let decoded = DisplayObjectivePacket::decode(&raw, proto)
+                .expect("decode display objective failed");
+            assert_eq!(decoded.position, 1);
+            assert_eq!(decoded.name, "");
+        }
+
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(776), 0x5C);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(768), 0x5C);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(766), 0x57);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(765), 0x55);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(764), 0x53);
+    }
+
+    #[test]
+    fn test_extract_respawn_from_login_with_data_kept_modern() {
+        let mut payload = BytesMut::new();
+        payload.put_i32(100); // entity_id
+        payload.put_u8(0); // is_hardcore
+        encode_varint(1, &mut payload); // dim count
+        encode_varint(19, &mut payload);
+        payload.put_slice(b"minecraft:overworld");
+        encode_varint(50, &mut payload); // max_players
+        encode_varint(16, &mut payload); // view_distance
+        encode_varint(12, &mut payload); // simulation_distance
+        payload.put_u8(0); // reduced_debug_info
+        payload.put_u8(1); // show_respawn_screen
+        payload.put_u8(0); // do_limited_crafting
+
+        // SpawnInfo:
+        let spawn_start = payload.len();
+        encode_varint(0, &mut payload); // dim
+        encode_varint(19, &mut payload);
+        payload.put_slice(b"minecraft:overworld");
+        payload.put_i64(123456789i64); // hashed_seed
+        payload.put_u8(0); // gamemode
+        payload.put_i8(-1); // prev gamemode
+        payload.put_u8(0); // is_debug
+        payload.put_u8(0); // is_flat
+        payload.put_u8(0); // death
+        encode_varint(0, &mut payload); // portal cooldown
+        encode_varint(63, &mut payload); // sea level
+        let spawn_end = payload.len();
+
+        payload.put_u8(0); // online_mode
+        payload.put_u8(0); // enforces_secure_chat
+
+        let login_pkt = RawPacket::new(0x31, payload.freeze());
+        let spawn_info_bytes = &login_pkt.payload[spawn_start..spawn_end];
+
+        // 1. KEEP_ALL_DATA (0x03)
+        let respawn_all = extract_respawn_from_login_with_data_kept(&login_pkt, 776, KEEP_ALL_DATA)
+            .expect("extract failed");
+        assert_eq!(respawn_all.id, 0x52);
+        assert_eq!(respawn_all.payload[spawn_info_bytes.len()], KEEP_ALL_DATA);
+
+        // 2. KEEP_ATTRIBUTES (0x01)
+        let respawn_attr =
+            extract_respawn_from_login_with_data_kept(&login_pkt, 776, KEEP_ATTRIBUTES)
+                .expect("extract failed");
+        assert_eq!(
+            respawn_attr.payload[spawn_info_bytes.len()],
+            KEEP_ATTRIBUTES
+        );
+
+        // 3. KEEP_METADATA (0x02)
+        let respawn_meta =
+            extract_respawn_from_login_with_data_kept(&login_pkt, 776, KEEP_METADATA)
+                .expect("extract failed");
+        assert_eq!(respawn_meta.payload[spawn_info_bytes.len()], KEEP_METADATA);
+    }
+
+    #[tokio::test]
+    async fn test_seamless_transfer_gui_sanitization() {
+        let host = Arc::new(ScriptHost::new());
+        host.reload("scripts/main.rhai")
+            .await
+            .expect("Load scripts failed");
+
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+
+        let (mut steel_backend, steel_server_end) = duplex(65536);
+        connector.register("steelmc", Box::new(steel_server_end));
+
+        tokio::spawn(async move {
+            let finish = FinishConfigurationPacket::new().encode();
+            write_packet(&mut steel_backend, &finish)
+                .await
+                .expect("Write finish config failed");
+            let _ = read_packet(&mut steel_backend, 65536).await;
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut steel_backend, &mut buf).await;
+        });
+
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        // Backend opens a chest container (window_id = 7)
+        let mut open_window_payload = BytesMut::new();
+        encode_varint(7, &mut open_window_payload); // windowId = 7
+        encode_varint(0, &mut open_window_payload); // chest inventory type
+        encode_varint(4, &mut open_window_payload); // title length
+        open_window_payload.put_slice(b"Menu");
+        let open_pkt = RawPacket::new(0x31, open_window_payload.freeze()); // 0x31 on 765
+        sm.handle_backend_packet(open_pkt).await.unwrap();
+        assert_eq!(sm.open_container_id, Some(7));
+        let pkt_open_forwarded = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_open_forwarded.id, 0x31);
+
+        // Player switches server via /steel
+        let steel_cmd = ServerboundChatCommand::new("/steel").encode();
+        sm.handle_client_packet(steel_cmd).await.unwrap();
+
+        // 1. Read SystemChatMessage
+        let pkt1 = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt1.id, SYSTEM_CHAT_MESSAGE_PACKET_ID);
+
+        // 2. Client receives CloseContainerPacket with window_id = 7 to cleanly sanitize GUI!
+        let pkt_close = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_close.id, CLOSE_CONTAINER_PACKET_ID);
+        let close_dec = CloseContainerPacket::decode(&pkt_close, 765).unwrap();
+        assert_eq!(close_dec.window_id, 7);
+
+        // 3. Backend sends Login (Play)
+        let login_pkt = RawPacket::new(
+            0x29,
+            Bytes::from_static(&[0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
+        );
+        sm.handle_backend_packet(login_pkt).await.unwrap();
+
+        // 4. Client receives Login (Play)
+        let pkt_login = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_login.id, 0x29);
+
+        // 5. Client receives Respawn
+        let pkt_respawn = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_respawn.id, RESPAWN_PACKET_ID);
+        let respawn_dec = RespawnPacket::decode(&pkt_respawn).unwrap();
+        assert_eq!(respawn_dec.data_kept, KEEP_ALL_DATA);
+    }
+
+    #[tokio::test]
+    async fn test_seamless_transfer_audio_cleanup() {
+        let host = Arc::new(ScriptHost::new());
+        host.reload("scripts/main.rhai")
+            .await
+            .expect("Load scripts failed");
+
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+
+        let (mut steel_backend, steel_server_end) = duplex(65536);
+        connector.register("steelmc", Box::new(steel_server_end));
+
+        tokio::spawn(async move {
+            let finish = FinishConfigurationPacket::new().encode();
+            write_packet(&mut steel_backend, &finish)
+                .await
+                .expect("Write finish config failed");
+            let _ = read_packet(&mut steel_backend, 65536).await;
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut steel_backend, &mut buf).await;
+        });
+
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        // Backend plays a sound effect (0x66 on protocol 765)
+        let sound_pkt = RawPacket::new(0x66, Bytes::from_static(&[0x01, 0x00]));
+        sm.handle_backend_packet(sound_pkt).await.unwrap();
+        assert!(sm.has_active_audio);
+
+        // Client drains forwarded sound packet
+        let _ = read_packet(&mut client_reader, 65536).await.unwrap();
+
+        // Player switches server via /steel
+        let steel_cmd = ServerboundChatCommand::new("/steel").encode();
+        sm.handle_client_packet(steel_cmd).await.unwrap();
+
+        // 1. Read SystemChatMessage
+        let pkt1 = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt1.id, SYSTEM_CHAT_MESSAGE_PACKET_ID);
+
+        // 2. Client receives StopSoundPacket::all() to silence lingering sounds!
+        let pkt_stop = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_stop.id, StopSoundPacket::packet_id_for_version(765));
+        let stop_dec = StopSoundPacket::decode(&pkt_stop, 765).unwrap();
+        assert_eq!(stop_dec.flags, 0); // Stops all sounds!
+
+        // 3. Backend sends Login (Play)
+        let login_pkt = RawPacket::new(
+            0x29,
+            Bytes::from_static(&[0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
+        );
+        sm.handle_backend_packet(login_pkt).await.unwrap();
+
+        // 4. Client receives Login (Play)
+        let pkt_login = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_login.id, 0x29);
+
+        // 5. Client receives Respawn
+        let pkt_respawn = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_respawn.id, RESPAWN_PACKET_ID);
+    }
+
+    #[tokio::test]
+    async fn test_seamless_transfer_bossbar_and_scoreboard_teardown() {
+        let host = Arc::new(ScriptHost::new());
+        host.reload("scripts/main.rhai")
+            .await
+            .expect("Load scripts failed");
+
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+
+        let (mut steel_backend, steel_server_end) = duplex(65536);
+        connector.register("steelmc", Box::new(steel_server_end));
+
+        tokio::spawn(async move {
+            let finish = FinishConfigurationPacket::new().encode();
+            write_packet(&mut steel_backend, &finish)
+                .await
+                .expect("Write finish config failed");
+            let _ = read_packet(&mut steel_backend, 65536).await;
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut steel_backend, &mut buf).await;
+        });
+
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        // Backend adds a BossBar
+        let boss_uuid = [42u8; 16];
+        let mut bb_payload = BytesMut::new();
+        bb_payload.put_slice(&boss_uuid);
+        encode_varint(BossBarPacket::ACTION_ADD, &mut bb_payload);
+        let bb_pkt = RawPacket::new(0x0A, bb_payload.freeze());
+        sm.handle_backend_packet(bb_pkt).await.unwrap();
+        assert!(sm.active_boss_bars.contains(&boss_uuid));
+        let _ = read_packet(&mut client_reader, 65536).await.unwrap(); // drain forwarded
+
+        // Backend creates a Scoreboard objective
+        let mut sb_payload = BytesMut::new();
+        encode_varint(7, &mut sb_payload);
+        sb_payload.put_slice(b"sidebar");
+        sb_payload.put_u8(ScoreboardObjectivePacket::ACTION_CREATE);
+        let sb_pkt = RawPacket::new(0x5C, sb_payload.freeze());
+        sm.handle_backend_packet(sb_pkt).await.unwrap();
+        assert!(sm.active_scoreboard_objectives.contains("sidebar"));
+        let _ = read_packet(&mut client_reader, 65536).await.unwrap(); // drain forwarded
+
+        // Player switches server via /steel
+        let steel_cmd = ServerboundChatCommand::new("/steel").encode();
+        sm.handle_client_packet(steel_cmd).await.unwrap();
+
+        // 1. Read SystemChatMessage
+        let pkt1 = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt1.id, SYSTEM_CHAT_MESSAGE_PACKET_ID);
+
+        // 2. Client receives ScoreboardObjectivePacket REMOVE
+        let pkt_sb = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_sb.id, 0x5C);
+        let sb_dec = ScoreboardObjectivePacket::decode(&pkt_sb, 765).unwrap();
+        assert_eq!(sb_dec.name, "sidebar");
+        assert_eq!(sb_dec.action, ScoreboardObjectivePacket::ACTION_REMOVE);
+
+        // 3. Client receives BossBarPacket REMOVE
+        let pkt_bb = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt_bb.id, 0x0A);
+        let bb_dec = BossBarPacket::decode(&pkt_bb, 765).unwrap();
+        assert_eq!(bb_dec.uuid, boss_uuid);
+        assert_eq!(bb_dec.action, BossBarPacket::ACTION_REMOVE);
+
+        assert!(sm.active_boss_bars.is_empty());
+        assert!(sm.active_scoreboard_objectives.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_manual_sanitize_screen_and_stop_audio_helpers() {
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+        let host = Arc::new(ScriptHost::new());
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        sm.sanitize_screen(0).await.expect("sanitize_screen failed");
+        let close_pkt = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(close_pkt.id, CLOSE_CONTAINER_PACKET_ID);
+        let close = CloseContainerPacket::decode(&close_pkt, 765).unwrap();
+        assert_eq!(close.window_id, 0);
+
+        sm.stop_audio().await.expect("stop_audio failed");
+        let stop_pkt = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(stop_pkt.id, StopSoundPacket::packet_id_for_version(765));
+        let stop = StopSoundPacket::decode(&stop_pkt, 765).unwrap();
+        assert_eq!(stop.flags, 0);
+    }
+
+    #[test]
+    fn test_extract_respawn_from_login_with_data_kept_765_custom_world() {
+        // Construct synthetic Login (Play) packet for protocol 765 (1.20.4)
+        let mut payload = BytesMut::new();
+        // 1. entity_id: i32
+        payload.put_i32(77);
+        // 2. is_hardcore: bool
+        payload.put_u8(0);
+        // 3. dimension_names: count + string
+        encode_varint(1, &mut payload);
+        encode_varint(20, &mut payload);
+        payload.put_slice(b"minecraft:the_nether");
+        // 4. max_players: VarInt
+        encode_varint(100, &mut payload);
+        // 5. view_distance: VarInt
+        encode_varint(10, &mut payload);
+        // 6. simulation_distance: VarInt
+        encode_varint(10, &mut payload);
+        // 7. reduced_debug_info: bool
+        payload.put_u8(0);
+        // 8. show_respawn_screen: bool
+        payload.put_u8(1);
+        // 9. do_limited_crafting: bool
+        payload.put_u8(0);
+
+        // SpawnInfo:
+        // 1. dimension_type: String
+        encode_varint(20, &mut payload);
+        payload.put_slice(b"minecraft:the_nether");
+        // 2. dimension_name: String
+        encode_varint(20, &mut payload);
+        payload.put_slice(b"minecraft:the_nether");
+        // 3. hashed_seed: i64
+        payload.put_i64(987654321i64);
+        // 4. gamemode: u8 (1 = Creative)
+        payload.put_u8(1);
+        // 5. previous_gamemode: i8 (-1 = None)
+        payload.put_i8(-1);
+        // 6. is_debug: bool
+        payload.put_u8(0);
+        // 7. is_flat: bool
+        payload.put_u8(0);
+        // 8. has_death_location: bool
+        payload.put_u8(0);
+        // 9. portal_cooldown: VarInt
+        encode_varint(0, &mut payload);
+
+        let login_pkt = RawPacket::new(0x29, payload.freeze());
+
+        let respawn = extract_respawn_from_login_with_data_kept(&login_pkt, 765, KEEP_ALL_DATA)
+            .expect("Extract 765 respawn failed");
+        assert_eq!(respawn.id, 0x45); // RESPAWN_PACKET_ID on 764/765
+
+        let decoded = RespawnPacket::decode_with_version(&respawn, 765).unwrap();
+        assert_eq!(decoded.dimension_type, "minecraft:the_nether");
+        assert_eq!(decoded.dimension_name, "minecraft:the_nether");
+        assert_eq!(decoded.hashed_seed, 987654321);
+        assert_eq!(decoded.gamemode, 1);
+        assert_eq!(decoded.previous_gamemode, -1);
+        assert_eq!(decoded.data_kept, KEEP_ALL_DATA);
+    }
+
+    #[tokio::test]
+    async fn test_seamless_transfer_display_objective_teardown() {
+        let host = Arc::new(ScriptHost::new());
+        host.reload("scripts/main.rhai")
+            .await
+            .expect("Load scripts failed");
+
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+
+        let (mut steel_backend, steel_server_end) = duplex(65536);
+        connector.register("steelmc", Box::new(steel_server_end));
+
+        tokio::spawn(async move {
+            let finish = FinishConfigurationPacket::new().encode();
+            write_packet(&mut steel_backend, &finish)
+                .await
+                .expect("Write finish config failed");
+            let _ = read_packet(&mut steel_backend, 65536).await;
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut steel_backend, &mut buf).await;
+        });
+
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        // Backend sets display objective for SIDEBAR (position 1)
+        let set_disp = DisplayObjectivePacket {
+            position: DisplayObjectivePacket::POSITION_SIDEBAR,
+            name: "sidebar_obj".to_string(),
+        }
+        .encode_with_version(765);
+        sm.handle_backend_packet(set_disp).await.unwrap();
+        assert!(sm
+            .active_display_slots
+            .contains(&DisplayObjectivePacket::POSITION_SIDEBAR));
+        let _ = read_packet(&mut client_reader, 65536).await.unwrap(); // drain forwarded
+
+        // Player switches server via /steel
+        let steel_cmd = ServerboundChatCommand::new("/steel").encode();
+        sm.handle_client_packet(steel_cmd).await.unwrap();
+
+        // 1. Read SystemChatMessage
+        let pkt1 = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt1.id, SYSTEM_CHAT_MESSAGE_PACKET_ID);
+
+        // 2. Client receives DisplayObjectivePacket CLEAR for SIDEBAR (position 1)
+        let pkt_disp = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(
+            pkt_disp.id,
+            DisplayObjectivePacket::packet_id_for_version(765)
+        );
+        let disp_dec = DisplayObjectivePacket::decode(&pkt_disp, 765).unwrap();
+        assert_eq!(disp_dec.position, DisplayObjectivePacket::POSITION_SIDEBAR);
+        assert!(
+            disp_dec.name.is_empty(),
+            "DisplayObjective clear must have empty name"
+        );
+
+        assert!(sm.active_display_slots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_clear_display_objective_helper() {
+        let config = Arc::new(ProxyConfig::default());
+        let connector = Arc::new(MockBackendConnector::new());
+        let host = Arc::new(ScriptHost::new());
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            sample_session(),
+            config,
+            host,
+            None,
+        );
+
+        sm.active_display_slots.insert(1);
+        sm.clear_display_objective(1)
+            .await
+            .expect("clear_display_objective failed");
+        assert!(sm.active_display_slots.is_empty());
+
+        let pkt = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(pkt.id, DisplayObjectivePacket::packet_id_for_version(765));
+        let decoded = DisplayObjectivePacket::decode(&pkt, 765).unwrap();
+        assert_eq!(decoded.position, 1);
+        assert!(decoded.name.is_empty());
     }
 }

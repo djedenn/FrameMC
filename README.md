@@ -6,7 +6,7 @@
 
   <p>
     <a href="https://github.com/djedenn/FrameMC/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
-    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-139%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
+    <a href="docs/TESTING.md"><img src="https://img.shields.io/badge/tests-152%20passed%20%2F%200%20failed-brightgreen?style=flat-square" alt="Tests" /></a>
     <a href="#-backend-compatibility-matrix"><img src="https://img.shields.io/badge/minecraft-1.20.4%20--%201.21.4%2B%20(764--776%2B)-blue?style=flat-square" alt="Protocols" /></a>
     <a href="#-platform-support"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue?style=flat-square&logo=linux&logoColor=white" alt="Platforms" /></a>
     <a href="#-benchmarks--resource-footprint"><img src="https://img.shields.io/badge/memory-~15%20MB%20RSS-blueviolet?style=flat-square" alt="Memory" /></a>
@@ -17,7 +17,7 @@
 </div>
 
 > [!WARNING]
-> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 139 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
+> **Early Development Phase & AI Foundation**: FrameMC is currently in early-stage development (`v0.1.0-alpha`). The majority of this repository is AI-written with a lot of care to lay a solid foundation to build upon. While core protocol handshakes, state machines, and cryptographic routines pass our 152 automated test cases, this project is experimental and is **not yet recommended for production or mission-critical networks**. Expect breaking changes as development progresses. Always test thoroughly in a staging environment before exposing it to public traffic.
 
 ---
 
@@ -148,7 +148,7 @@ The compiled executable lands at `target/release/framemc` (or `framemc.exe` on W
 ```bash
 cargo test --all-targets
 ```
-All 139 unit and integration tests should pass.
+All 152 unit and integration tests should pass.
 
 ### 4. Run FrameMC
 ```bash
@@ -184,7 +184,7 @@ For detailed guides, deep dives, and configuration references, check the `docs/`
 | **[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)** | Exhaustive `config.toml` key reference, routing rules, compression tuning, timeouts, and backend configs. |
 | **[`docs/SCRIPTING.md`](docs/SCRIPTING.md)** | Sandboxed Rhai scripting guide: `on_player_join`, `on_player_command`, `on_tab_complete`, `kv_*` store, and examples. |
 | **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** | Core architectural invariants [R-01]–[R-12], wire layouts, packet synthesis, and zero-copy socket bridging. |
-| **[`docs/TESTING.md`](docs/TESTING.md)** | Complete breakdown of all 136 automated wire-level tests, cryptography verification, and protocol coverage. |
+| **[`docs/TESTING.md`](docs/TESTING.md)** | Complete breakdown of all 152 automated wire-level tests, cryptography verification, and protocol coverage. |
 
 ---
 

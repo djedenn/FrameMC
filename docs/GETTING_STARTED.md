@@ -12,7 +12,8 @@ Getting FrameMC running takes about two minutes. Because it compiles to a standa
   - [Step-by-Step Paper Setup (Velocity Modern)](#step-by-step-paper-setup-velocity-modern-forwarding)
 - [Production Deployment](#production-deployment)
   - [1. Systemd Service](#1-systemd-service-etcsystemdsystemframemcservice)
-  - [2. File Descriptor Limits (ulimit)](#2-file-descriptor-limits-ulimit)
+  - [2. macOS Deployment (launchd daemon)](#2-macos-deployment-launchd-daemon)
+  - [3. File Descriptor Limits (ulimit)](#3-file-descriptor-limits-ulimit)
 - [Troubleshooting Initial Setup](#troubleshooting-initial-setup)
 - [Quick Diagnostic Commands](#quick-diagnostic-commands)
 - [Next Steps](#next-steps)
@@ -61,7 +62,7 @@ Before deploying, run the test suite to confirm your local platform passes all w
 cargo test --all-targets
 ```
 
-All 136 tests should pass cleanly without ignored or failing cases.
+All 152 tests should pass cleanly without ignored or failing cases.
 
 ---
 

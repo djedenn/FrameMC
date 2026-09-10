@@ -17,7 +17,7 @@ For architecture details, setup steps, or configuration options, see:
 - [2. Protocol Wire Formats, Handshake & Compression (24 Tests)](#2-protocol-wire-formats-handshake--compression-24-tests)
 - [3. Login Authentication & Forwarding Handshakes (25 Tests)](#3-login-authentication--forwarding-handshakes-25-tests)
 - [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
-- [5. Play State Machine, Server Switching & Bridge (30 Tests)](#5-play-state-machine-server-switching--bridge-30-tests)
+- [5. Play State Machine, Server Switching & Bridge (43 Tests)](#5-play-state-machine-server-switching--bridge-43-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
 - [7. Configuration, Network Listener & Integration Tests (20 Tests)](#7-configuration-network-listener--integration-tests-20-tests)
 - [8. Command-Line Interface & Application Lifecycle (6 Tests)](#8-command-line-interface--application-lifecycle-6-tests)
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   139
-Passed:                   139
+Total Test Invocations:   152
+Passed:                   152
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -43,7 +43,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ### Bash (Linux / macOS):
 ```bash
-# Run all 139 tests
+# Run all 152 tests
 cargo test --all-targets
 
 # Run tests with real-time names and stdout/stderr output
@@ -61,7 +61,7 @@ RUST_LOG=framemc=debug cargo test test_full_status_ping_flow_over_tcp -- --nocap
 
 ### PowerShell (Windows):
 ```powershell
-# Run all 136 tests
+# Run all 152 tests
 cargo test --all-targets
 
 # Run tests with verbose output
@@ -177,9 +177,9 @@ Minecraft 1.20.2 overhauled connection handshakes by introducing an independent 
 
 ---
 
-## 5. Play State Machine, Server Switching & Bridge (30 Tests)
+## 5. Play State Machine, Server Switching & Bridge (43 Tests)
 
-Once players enter the Play state, FrameMC routes commands and switches servers without dropping the client socket. We verify Brigadier command tree injection (so `/server` and `/lobby` appear in the client's tab-completion HUD), mid-game transfers across different compression thresholds, and failover routing when an active backend crashes unexpectedly.
+Once players enter the Play state, FrameMC routes commands and switches servers without dropping the client socket. We verify Brigadier command tree injection (so `/server` and `/lobby` appear in the client's tab-completion HUD), mid-game transfers across different compression thresholds, state sanitization (closing container GUIs, stopping active audio, clearing scoreboards and bossbars), and failover routing when an active backend crashes unexpectedly.
 
 | Test Function | Target Module | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -202,9 +202,22 @@ Once players enter the Play state, FrameMC routes commands and switches servers 
 | `test_is_login_play_packet_across_versions` | `routing::state_machine` | Login (Play) packet ID resolution across protocol versions | ✅ Passed |
 | `test_is_login_play_packet_comprehensive` | `routing::state_machine` | Comprehensive validation of Login (Play) packet layouts | ✅ Passed |
 | `test_extract_respawn_from_login_modern_776` | `routing::state_machine` | Respawn packet synthesized from downstream Login (Play) for 1.21.4+ | ✅ Passed |
+| `test_extract_respawn_from_login_with_data_kept_modern` | `routing::state_machine` | Preserving SpawnInfo and dataToKeep flag (KEEP_ALL_DATA, KEEP_ATTRIBUTES, KEEP_METADATA) for 1.21.4+ | ✅ Passed |
+| `test_extract_respawn_from_login_with_data_kept_765_custom_world` | `routing::state_machine` | Dimension extraction and respawn synthesis for 1.20.2 - 1.20.4 (Protocols 764-765) | ✅ Passed |
 | `test_respawn_packet_roundtrip` | `routing::state_machine` | Respawn packet serialization and parsing across versions | ✅ Passed |
 | `test_respawn_packet_ids_across_versions` | `routing::state_machine` | Respawn packet IDs verified across 1.20.4, 1.20.6, 1.21, 1.21.4 | ✅ Passed |
 | `test_respawn_packet_protocol_776_packet_id` | `routing::state_machine` | Exact packet ID verification for Protocol 776 | ✅ Passed |
+| `test_boss_bar_packet_codecs_across_versions` | `routing::state_machine` | BossBarPacket (0x0A/0x0B) remove action serialization across versions | ✅ Passed |
+| `test_scoreboard_objective_codecs_across_versions` | `routing::state_machine` | ScoreboardObjectivePacket remove action serialization across versions | ✅ Passed |
+| `test_display_objective_codecs_across_versions` | `routing::state_machine` | DisplayObjectivePacket clear slot serialization across versions | ✅ Passed |
+| `test_close_container_packet_codecs_across_versions` | `routing::state_machine` | CloseContainerPacket (0x12/0x11/0x0F/0x10) window close codec across versions | ✅ Passed |
+| `test_stop_sound_packet_codecs_across_versions` | `routing::state_machine` | StopSoundPacket (0x66/0x68/0x6A/0x71) audio stop flags and sound identifiers | ✅ Passed |
+| `test_seamless_transfer_gui_sanitization` | `routing::state_machine` | Automated container window closure on server switch | ✅ Passed |
+| `test_seamless_transfer_audio_cleanup` | `routing::state_machine` | Automated audio loop termination on server switch | ✅ Passed |
+| `test_seamless_transfer_bossbar_and_scoreboard_teardown` | `routing::state_machine` | Complete cleanup of lingering bossbars and scoreboard objectives | ✅ Passed |
+| `test_seamless_transfer_display_objective_teardown` | `routing::state_machine` | Clearing active display objective slots on server switch | ✅ Passed |
+| `test_clear_display_objective_helper` | `routing::state_machine` | Direct programmatic invocation of clear_display_objective | ✅ Passed |
+| `test_manual_sanitize_screen_and_stop_audio_helpers` | `routing::state_machine` | Direct programmatic invocation of sanitize_screen and stop_audio | ✅ Passed |
 | `test_system_chat_message_roundtrip` | `routing::state_machine` | System chat message packet serialization (JSON component) | ✅ Passed |
 | `test_system_chat_message_protocol_776_nbt_roundtrip` | `routing::state_machine` | NBT-encoded system chat component serialization for 1.21.4+ | ✅ Passed |
 | `test_system_chat_packet_ids_across_versions` | `routing::state_machine` | System chat packet IDs verified across protocol range | ✅ Passed |

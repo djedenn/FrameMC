@@ -41,10 +41,8 @@ impl<S> EncryptedStream<S> {
     /// Creates a new `EncryptedStream` using the provided 16-byte shared secret
     /// as both the AES-128 key and CFB8 initialization vector (IV).
     pub fn new(inner: S, shared_secret: &[u8; 16]) -> Self {
-        let encryptor = Aes128Cfb8Enc::new_from_slices(shared_secret, shared_secret)
-            .expect("Invalid key/iv length for AES-128-CFB8");
-        let decryptor = Aes128Cfb8Dec::new_from_slices(shared_secret, shared_secret)
-            .expect("Invalid key/iv length for AES-128-CFB8");
+        let encryptor = Aes128Cfb8Enc::new(shared_secret.into(), shared_secret.into());
+        let decryptor = Aes128Cfb8Dec::new(shared_secret.into(), shared_secret.into());
 
         Self {
             inner: Some(inner),
@@ -56,21 +54,23 @@ impl<S> EncryptedStream<S> {
         }
     }
 
-    pub fn get_ref(&self) -> &S {
-        self.inner.as_ref().expect("EncryptedStream uninitialized")
+    pub fn get_ref(&self) -> Option<&S> {
+        self.inner.as_ref()
     }
 
-    pub fn get_mut(&mut self) -> &mut S {
-        self.inner.as_mut().expect("EncryptedStream uninitialized")
+    pub fn get_mut(&mut self) -> Option<&mut S> {
+        self.inner.as_mut()
     }
 
     /// Consumes the wrapper and unwraps the inner stream, securely wiping the shared secret.
     pub fn into_inner(mut self) -> S {
         self.shared_secret.zeroize();
         self.write_buf.zeroize();
-        self.inner
-            .take()
-            .expect("EncryptedStream inner already taken")
+        self.inner.take().unwrap_or_else(|| {
+            unreachable!(
+                "EncryptedStream inner is guaranteed present until into_inner consumes self"
+            )
+        })
     }
 }
 
@@ -109,7 +109,15 @@ impl<S: AsyncRead + Unpin> AsyncRead for EncryptedStream<S> {
     ) -> Poll<std::io::Result<()>> {
         let before_filled = buf.filled().len();
         let this = self.get_mut();
-        let inner = this.inner.as_mut().expect("EncryptedStream uninitialized");
+        let inner = match this.inner.as_mut() {
+            Some(i) => i,
+            None => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "EncryptedStream inner stream is uninitialized or closed",
+                )));
+            }
+        };
 
         match Pin::new(inner).poll_read(cx, buf) {
             Poll::Ready(Ok(())) => {
@@ -134,7 +142,15 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for EncryptedStream<S> {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let inner = this.inner.as_mut().expect("EncryptedStream uninitialized");
+        let inner = match this.inner.as_mut() {
+            Some(i) => i,
+            None => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "EncryptedStream inner stream is uninitialized or closed",
+                )));
+            }
+        };
 
         // 1. Drain any previously buffered ciphertext first with backpressure
         match flush_pending_write(inner, &mut this.write_buf, &mut this.write_cursor, cx) {
@@ -174,7 +190,15 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for EncryptedStream<S> {
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        let inner = this.inner.as_mut().expect("EncryptedStream uninitialized");
+        let inner = match this.inner.as_mut() {
+            Some(i) => i,
+            None => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "EncryptedStream inner stream is uninitialized or closed",
+                )));
+            }
+        };
         match flush_pending_write(inner, &mut this.write_buf, &mut this.write_cursor, cx) {
             Poll::Ready(Ok(())) => Pin::new(inner).poll_flush(cx),
             other => other,
@@ -183,7 +207,15 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for EncryptedStream<S> {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        let inner = this.inner.as_mut().expect("EncryptedStream uninitialized");
+        let inner = match this.inner.as_mut() {
+            Some(i) => i,
+            None => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "EncryptedStream inner stream is uninitialized or closed",
+                )));
+            }
+        };
         match flush_pending_write(inner, &mut this.write_buf, &mut this.write_cursor, cx) {
             Poll::Ready(Ok(())) => Pin::new(inner).poll_shutdown(cx),
             other => other,
