@@ -296,14 +296,12 @@ impl TabCompleteRequestPacket {
     }
 
     pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
-        let packet_id = if protocol_version >= 775 {
-            0x0F
-        } else if protocol_version >= 768 {
-            0x0D
+        let packet_id = if protocol_version >= 768 {
+            0x0D // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
         } else if protocol_version >= 766 {
-            0x0B
+            0x0B // 1.20.5 - 1.21.1
         } else if protocol_version >= 764 {
-            0x0A
+            0x0A // 1.20.2 - 1.20.4
         } else {
             0x06
         };
@@ -336,10 +334,8 @@ impl TabCompleteResponsePacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 770 {
-            0x0F
-        } else if protocol_version >= 764 {
-            0x10
+        if protocol_version >= 764 {
+            0x10 // 1.20.2 through 1.21.4+ (protocols 764 - 776+)
         } else {
             0x0F
         }
@@ -451,10 +447,8 @@ impl RespawnPacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 775 {
-            0x52
-        } else if protocol_version >= 768 {
-            0x4C
+        if protocol_version >= 768 {
+            0x4C // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
         } else if protocol_version >= 766 {
             0x47
         } else if protocol_version >= 764 {
@@ -786,10 +780,8 @@ impl RespawnPacket {
 /// Returns true if the given packet ID corresponds to the clientbound Login (Play) / JoinGame packet
 /// for the specified protocol version.
 pub fn is_login_play_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 775 {
-        id == 0x31
-    } else if protocol_version >= 768 {
-        id == 0x2C
+    if protocol_version >= 768 {
+        id == 0x2C // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
     } else if protocol_version >= 766 {
         id == 0x2B
     } else if protocol_version >= 764 {
@@ -1094,12 +1086,8 @@ pub fn extract_respawn_from_login(
 }
 
 /// Returns true if the packet ID corresponds to the clientbound DeclareCommands packet.
-pub fn is_declare_commands_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 770 {
-        id == 0x10
-    } else {
-        id == 0x11
-    }
+pub fn is_declare_commands_packet(id: i32, _protocol_version: i32) -> bool {
+    id == 0x11 || id == 0x12 || id == 0x10
 }
 
 /// Injects FrameMC proxy commands (`server`, `hub`, `lobby`, `steel`, etc.) into the backend's
@@ -1293,10 +1281,8 @@ impl SystemChatMessagePacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 775 {
-            0x79
-        } else if protocol_version >= 768 {
-            0x73
+        if protocol_version >= 768 {
+            0x73 // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
         } else if protocol_version >= 766 {
             0x6C
         } else if protocol_version >= 764 {
@@ -2533,20 +2519,12 @@ impl PlayStateMachine {
                 "Received Login (Play) packet from backend"
             );
 
-            // Forward Login (Play) to client first
-            write_packet_with_compression(
-                &mut self.client,
-                &packet,
-                self.client_compression_threshold,
-            )
-            .await?;
-            let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
-
-            // If this is following a mid-session server transfer, immediately follow Login (Play)
-            // with a client-bound Respawn packet matching the new world state [R-11].
-            // Modern protocols (>= 764) preserve player attributes (0x01) and metadata (0x02) via
-            // KEEP_ALL_DATA (0x03) to completely prevent the death/dirt loading screen flash.
             if self.server_transferred {
+                // Mid-session server transfer:
+                // NEVER forward Login (Play) to an already connected client in Play state!
+                // Forwarding Login (Play) mid-session unhooks the client's containerMenu slot listeners
+                // and triggers DecoderException on subsequent container_set_content (0x13) packets.
+                // Instead, translate the backend's Login (Play) into a clientbound Respawn packet [R-11].
                 self.server_transferred = false;
                 let data_kept = if self.session.protocol_version >= 764 {
                     KEEP_ALL_DATA
@@ -2574,8 +2552,17 @@ impl PlayStateMachine {
                     player = %self.session.profile.name,
                     server = %self.session.current_server,
                     data_kept = data_kept,
-                    "Dispatched matching Respawn packet to client following server transfer"
+                    "Dispatched matching Respawn packet to client following server transfer (Login suppressed)"
                 );
+            } else {
+                // Initial login sequence: forward Login (Play) to the client so it can enter Play state.
+                write_packet_with_compression(
+                    &mut self.client,
+                    &packet,
+                    self.client_compression_threshold,
+                )
+                .await?;
+                let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
             }
 
             return Ok(true);
@@ -2973,8 +2960,8 @@ pub mod tests {
             SystemChatMessagePacket::new("§6[FrameMC] §eYou are currently on: §asteelmc", false);
         let raw_776 = msg.encode_with_version(776);
         assert_eq!(
-            raw_776.id, 0x79,
-            "Protocol 776 system chat packet ID must be 0x79 (121)"
+            raw_776.id, 0x73,
+            "Protocol 776 system chat packet ID must be 0x73 (115)"
         );
         assert_eq!(
             raw_776.payload[0], 0x0A,
@@ -2994,8 +2981,8 @@ pub mod tests {
         let respawn = RespawnPacket::default_reset();
         let raw_776 = respawn.encode_with_version(776);
         assert_eq!(
-            raw_776.id, 0x52,
-            "Protocol 776 respawn packet ID must be 0x52 (82)"
+            raw_776.id, 0x4C,
+            "Protocol 776 respawn packet ID must be 0x4C (76)"
         );
     }
 
@@ -3079,17 +3066,11 @@ pub mod tests {
             .await
             .expect("Handle backend login failed");
 
-        // Client receives Login (Play) first
+        // Client receives synthesized Respawn (Login (Play) is suppressed on transfer to prevent client container reset)
         let pkt2 = read_packet(&mut reader, 65536)
             .await
             .expect("Read pkt2 failed");
-        assert_eq!(pkt2.id, 0x29);
-
-        // Client receives Respawn immediately following Login (Play)
-        let pkt3 = read_packet(&mut reader, 65536)
-            .await
-            .expect("Read pkt3 failed");
-        assert_eq!(pkt3.id, RESPAWN_PACKET_ID);
+        assert_eq!(pkt2.id, RESPAWN_PACKET_ID);
         assert!(!sm.server_transferred);
     }
 
@@ -3229,15 +3210,11 @@ pub mod tests {
             .await
             .expect("Handle backend login failed");
 
+        // Client receives synthesized Respawn (Login (Play) is suppressed on transfer to prevent client container reset)
         let pkt2 = read_packet(&mut client_reader, 65536)
             .await
             .expect("Read client pkt2 failed");
-        assert_eq!(pkt2.id, 0x29);
-
-        let pkt3 = read_packet(&mut client_reader, 65536)
-            .await
-            .expect("Read client pkt3 failed");
-        assert_eq!(pkt3.id, RESPAWN_PACKET_ID);
+        assert_eq!(pkt2.id, RESPAWN_PACKET_ID);
         assert!(!sm.server_transferred);
     }
 
@@ -3310,24 +3287,18 @@ pub mod tests {
             .await
             .expect("Handle backend login failed");
 
-        // Client receives Login (Play) with client compression
+        // Client receives Respawn with client compression (Login Play is suppressed on transfer)
         let pkt2 = read_packet_with_compression(&mut reader, 65536, Some(256))
             .await
             .expect("Read pkt2 failed");
-        assert_eq!(pkt2.id, 0x29);
-
-        // Client receives Respawn with client compression
-        let pkt3 = read_packet_with_compression(&mut reader, 65536, Some(256))
-            .await
-            .expect("Read pkt3 failed");
-        assert_eq!(pkt3.id, RESPAWN_PACKET_ID);
+        assert_eq!(pkt2.id, RESPAWN_PACKET_ID);
         assert!(!sm.server_transferred);
     }
 
     #[test]
     fn test_is_login_play_packet_across_versions() {
-        assert!(is_login_play_packet(0x31, 776));
-        assert!(is_login_play_packet(0x31, 775));
+        assert!(is_login_play_packet(0x2C, 776));
+        assert!(is_login_play_packet(0x2C, 775));
         assert!(is_login_play_packet(0x2C, 768));
         assert!(is_login_play_packet(0x2C, 774));
         assert!(is_login_play_packet(0x2B, 766));
@@ -3394,12 +3365,12 @@ pub mod tests {
         // 12. enforces_secure_chat: bool (1 byte)
         payload.put_u8(0);
 
-        let login_pkt = RawPacket::new(0x31, payload.freeze());
+        let login_pkt = RawPacket::new(0x2C, payload.freeze());
         let expected_spawn_info = &login_pkt.payload[spawn_info_start..spawn_info_end];
 
         let respawn_pkt =
             extract_respawn_from_login(&login_pkt, 776).expect("Respawn extraction failed");
-        assert_eq!(respawn_pkt.id, 0x52); // Respawn ID on protocol >= 775
+        assert_eq!(respawn_pkt.id, 0x4C); // Respawn ID on protocol >= 768
         assert_eq!(respawn_pkt.payload.len(), expected_spawn_info.len() + 1);
         assert_eq!(
             &respawn_pkt.payload[..expected_spawn_info.len()],
@@ -3597,8 +3568,8 @@ pub mod tests {
 
     #[test]
     fn test_is_login_play_packet_comprehensive() {
-        assert!(is_login_play_packet(0x31, 776));
-        assert!(is_login_play_packet(0x31, 775));
+        assert!(is_login_play_packet(0x2C, 776));
+        assert!(is_login_play_packet(0x2C, 775));
         assert!(is_login_play_packet(0x2C, 768));
         assert!(is_login_play_packet(0x2B, 766));
         assert!(is_login_play_packet(0x29, 764));
@@ -3619,8 +3590,8 @@ pub mod tests {
 
     #[test]
     fn test_system_chat_packet_ids_across_versions() {
-        assert_eq!(SystemChatMessagePacket::packet_id_for_version(776), 0x79);
-        assert_eq!(SystemChatMessagePacket::packet_id_for_version(775), 0x79);
+        assert_eq!(SystemChatMessagePacket::packet_id_for_version(776), 0x73);
+        assert_eq!(SystemChatMessagePacket::packet_id_for_version(775), 0x73);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(768), 0x73);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(766), 0x6C);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(764), 0x69);
@@ -3632,7 +3603,7 @@ pub mod tests {
 
         // Verify valid packet ids decoded
         for (proto, id) in [
-            (776, 0x79),
+            (776, 0x73),
             (768, 0x73),
             (766, 0x6C),
             (764, 0x69),
@@ -3651,8 +3622,8 @@ pub mod tests {
 
     #[test]
     fn test_respawn_packet_ids_across_versions() {
-        assert_eq!(RespawnPacket::packet_id_for_version(776), 0x52);
-        assert_eq!(RespawnPacket::packet_id_for_version(775), 0x52);
+        assert_eq!(RespawnPacket::packet_id_for_version(776), 0x4C);
+        assert_eq!(RespawnPacket::packet_id_for_version(775), 0x4C);
         assert_eq!(RespawnPacket::packet_id_for_version(768), 0x4C);
         assert_eq!(RespawnPacket::packet_id_for_version(766), 0x47);
         assert_eq!(RespawnPacket::packet_id_for_version(764), 0x45);
@@ -3667,7 +3638,7 @@ pub mod tests {
         // Test modern decode (776)
         let respawn = RespawnPacket::default_reset();
         let encoded_776 = respawn.encode_with_version(776);
-        assert_eq!(encoded_776.id, 0x52);
+        assert_eq!(encoded_776.id, 0x4C);
         let decoded_776 = RespawnPacket::decode_with_version(&encoded_776, 776).unwrap();
         assert_eq!(decoded_776.dimension_name, "minecraft:overworld");
         assert_eq!(decoded_776.data_kept, 0);
@@ -4045,13 +4016,13 @@ pub mod tests {
         payload.put_u8(0); // online_mode
         payload.put_u8(0); // enforces_secure_chat
 
-        let login_pkt = RawPacket::new(0x31, payload.freeze());
+        let login_pkt = RawPacket::new(0x2C, payload.freeze());
         let spawn_info_bytes = &login_pkt.payload[spawn_start..spawn_end];
 
         // 1. KEEP_ALL_DATA (0x03)
         let respawn_all = extract_respawn_from_login_with_data_kept(&login_pkt, 776, KEEP_ALL_DATA)
             .expect("extract failed");
-        assert_eq!(respawn_all.id, 0x52);
+        assert_eq!(respawn_all.id, 0x4C);
         assert_eq!(respawn_all.payload[spawn_info_bytes.len()], KEEP_ALL_DATA);
 
         // 2. KEEP_ATTRIBUTES (0x01)
@@ -4139,11 +4110,7 @@ pub mod tests {
         );
         sm.handle_backend_packet(login_pkt).await.unwrap();
 
-        // 4. Client receives Login (Play)
-        let pkt_login = read_packet(&mut client_reader, 65536).await.unwrap();
-        assert_eq!(pkt_login.id, 0x29);
-
-        // 5. Client receives Respawn
+        // 4. Client receives Respawn (Login is suppressed on transfer to protect containerMenu)
         let pkt_respawn = read_packet(&mut client_reader, 65536).await.unwrap();
         assert_eq!(pkt_respawn.id, RESPAWN_PACKET_ID);
         let respawn_dec = RespawnPacket::decode(&pkt_respawn).unwrap();
@@ -4215,11 +4182,7 @@ pub mod tests {
         );
         sm.handle_backend_packet(login_pkt).await.unwrap();
 
-        // 4. Client receives Login (Play)
-        let pkt_login = read_packet(&mut client_reader, 65536).await.unwrap();
-        assert_eq!(pkt_login.id, 0x29);
-
-        // 5. Client receives Respawn
+        // 4. Client receives synthesized Respawn (Login (Play) is intercepted and suppressed to protect client container listeners)
         let pkt_respawn = read_packet(&mut client_reader, 65536).await.unwrap();
         assert_eq!(pkt_respawn.id, RESPAWN_PACKET_ID);
     }
