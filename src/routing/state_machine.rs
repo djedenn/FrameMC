@@ -2568,29 +2568,6 @@ impl PlayStateMachine {
             return Ok(true);
         }
 
-        // Intercept Declare Commands packet (0x10 on 770+, 0x11 on < 770) to inject proxy commands into client graph
-        if is_declare_commands_packet(packet.id, self.session.protocol_version) {
-            let server_names: Vec<String> = self.config.servers.keys().cloned().collect();
-            let injected_pkt = inject_proxy_commands_into_declare_commands(
-                &packet,
-                self.session.protocol_version,
-                &server_names,
-            )
-            .unwrap_or(packet);
-            write_packet_with_compression(
-                &mut self.client,
-                &injected_pkt,
-                self.client_compression_threshold,
-            )
-            .await?;
-            let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
-            tracing::info!(
-                player = %self.session.profile.name,
-                "Injected FrameMC proxy commands into DeclareCommands packet sent to client"
-            );
-            return Ok(true);
-        }
-
         // Normal packet: forward to client
         write_packet_with_compression(&mut self.client, &packet, self.client_compression_threshold)
             .await?;
