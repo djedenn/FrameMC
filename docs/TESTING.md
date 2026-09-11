@@ -19,7 +19,7 @@ For architecture details, setup steps, or configuration options, see:
 - [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
 - [5. Play State Machine, Server Switching & Bridge (46 Tests)](#5-play-state-machine-server-switching--bridge-46-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
-- [7. Configuration, Network Listener & Integration Tests (22 Tests)](#7-configuration-network-listener--integration-tests-22-tests)
+- [7. Configuration, Network Listener & Integration Tests (23 Tests)](#7-configuration-network-listener--integration-tests-23-tests)
 - [8. Command-Line Interface & Application Lifecycle (6 Tests)](#8-command-line-interface--application-lifecycle-6-tests)
 
 ---
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   157
-Passed:                   157
+Total Test Invocations:   158
+Passed:                   158
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -43,7 +43,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ### Bash (Linux / macOS):
 ```bash
-# Run all 157 tests
+# Run all 158 tests
 cargo test --all-targets
 
 # Run tests with real-time names and stdout/stderr output
@@ -61,7 +61,7 @@ RUST_LOG=framemc=debug cargo test test_full_status_ping_flow_over_tcp -- --nocap
 
 ### PowerShell (Windows):
 ```powershell
-# Run all 157 tests
+# Run all 158 tests
 cargo test --all-targets
 
 # Run tests with verbose output
@@ -259,12 +259,12 @@ Scripts should never be able to freeze the Tokio reactor or chew through memory.
 
 ---
 
-## 7. Configuration, Network Listener & Integration Tests (22 Tests)
+### 7. Configuration, Network Listener & Integration Tests (23 Tests)
 
 These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against live SteelMC and Paper backends.
 
 | Test Function | Location | Verification Scope | Status |
-| :--- | :--- | :--- | :---: |
+| :--- | :--- | :--- | :--- |
 | `test_default_template_matches_default_struct` | `config` | Generated default template matches `ProxyConfig` in-memory defaults | ✅ Passed |
 | `test_forwarding_mode_parsing` | `config` | Parsing `velocity_modern`, `legacy_bungee`, and `none` from TOML | ✅ Passed |
 | `test_load_or_create` | `config` | Reading existing config or bootstrapping default configuration | ✅ Passed |
@@ -286,6 +286,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 | `test_offline_mode_login_protocol_776_over_tcp` | `tests/login_auth_test.rs` | Real TCP Protocol 776 (1.21.4+) offline login flow | ✅ Passed |
 | `test_online_mode_case_insensitive_username_matches` | `tests/login_auth_test.rs` | Real TCP login with mixed-case username matching Mojang profile | ✅ Passed |
 | `test_live_server_transfer_steelmc_and_paper` | `tests/transfer_live_test.rs` | Real loopback multi-server switching across live SteelMC (25566, 25567) and Paper (25568, 25569) backends | ✅ Passed |
+| `test_legacy_bungee_forwarding_e2e_tcp` | `tests/transfer_live_test.rs` | Real loopback TCP Legacy BungeeCord null-delimited host forwarding to backend | ✅ Passed |
 
 ---
 

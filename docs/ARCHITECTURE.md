@@ -200,4 +200,4 @@ Traditional Java proxies keep an active Netty channel pipeline alive throughout 
 FrameMC's bridge uses Tokio's `copy_bidirectional`:
 - **Kernel-Level Relaying**: Operating system socket buffers transfer bytes directly with minimal context switching.
 - **Immediate FIN Teardown**: When either the client closes their connection or the backend shuts down, EOF signals propagate immediately to the counterpart socket, avoiding lingering half-open sockets or file descriptor leaks.
-- **Zero Heap Churn**: Zero packet structures are allocated in user-space during raw gameplay streaming, maintaining an idle RSS footprint of ~12–22 MB even under load.
+- **Zero Heap Churn**: Zero packet structures are allocated in user-space during raw gameplay streaming, maintaining an idle Working Set footprint of ~9.1 MB (2.1 MB private committed memory).

@@ -76,7 +76,7 @@ Point your Minecraft client (1.20.4 – 1.21.4+) to `127.0.0.1:25565` to connect
 FrameMC doesn't depend on an external runtime or shared C libraries. It runs as a self-contained executable:
 
 - **Operating System**: 64-bit Linux (glibc 2.17+ or musl), Windows 10/11/Server, or macOS 12+ (Apple Silicon or Intel).
-- **Memory footprint**: ~15 MB RSS baseline. Unlike Java proxies that hold onto hundreds of megabytes for heap pools and GC metadata, FrameMC runs comfortably on a 512 MB VPS alongside other services.
+- **Memory footprint**: ~9.1 MB Working Set baseline (2.1 MB private committed memory), requiring a fraction of the RAM needed by JVM proxies.
 - **CPU**: Any modern x86_64 or aarch64 core. If your x86_64 CPU supports SSE4.2 and AES-NI, encryption handshakes run with hardware acceleration.
 
 ---
@@ -104,7 +104,7 @@ The compiled binary will be located at:
 ```bash
 cargo test --all-targets
 ```
-All 153 tests should pass cleanly without ignored or failing cases.
+All 158 tests should pass cleanly without ignored or failing cases.
 
 ---
 

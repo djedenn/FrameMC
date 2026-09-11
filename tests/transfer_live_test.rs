@@ -389,3 +389,113 @@ async fn test_live_server_transfer_steelmc_and_paper() {
     let _ = proxy_handle.await;
     println!(">>> Test completed with 100% success!");
 }
+
+#[tokio::test]
+async fn test_legacy_bungee_forwarding_e2e_tcp() {
+    // Spawns a mock Spigot/CraftBukkit listener expecting Legacy Bungee forwarding format
+    // Format: host\0client_ip\0clean_uuid
+    let spigot_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind mock Spigot listener");
+    let spigot_port = spigot_listener.local_addr().unwrap().port();
+
+    let spigot_task = tokio::spawn(async move {
+        let (mut server_stream, _) = spigot_listener.accept().await.unwrap();
+        // 1. Read Handshake
+        let hs_raw = read_packet(&mut server_stream, DEFAULT_MAX_PACKET_SIZE)
+            .await
+            .unwrap();
+        let hs = HandshakePacket::decode(&hs_raw).unwrap();
+        let parts: Vec<&str> = hs.server_address.split('\0').collect();
+        assert!(
+            parts.len() >= 3,
+            "Expected at least 3 null-delimited parts in Legacy Bungee host: {:?}",
+            hs.server_address
+        );
+        assert_eq!(parts[0], "127.0.0.1");
+        assert_eq!(parts[1], "127.0.0.1");
+        assert_eq!(parts[2], "50ffad2875c935b1af41768e70a4d3e9");
+
+        // 2. Read LoginStart
+        let ls_raw = read_packet(&mut server_stream, DEFAULT_MAX_PACKET_SIZE)
+            .await
+            .unwrap();
+        let ls = LoginStartPacket::decode(&ls_raw).unwrap();
+        assert_eq!(ls.username, "v4mphire");
+
+        // 3. Respond with LoginSuccess (0x02)
+        let success = LoginSuccessPacket::new(ls.player_uuid, &ls.username, vec![]);
+        write_packet(&mut server_stream, &success.encode())
+            .await
+            .unwrap();
+    });
+
+    let mut servers = HashMap::new();
+    servers.insert(
+        "spigot".to_string(),
+        BackendConfig {
+            address: "127.0.0.1".to_string(),
+            port: spigot_port,
+            forwarding_mode: ForwardingMode::LegacyBungee,
+            forwarding_secret: None,
+        },
+    );
+
+    let mut config = ProxyConfig {
+        bind_address: "127.0.0.1".to_string(),
+        bind_port: 0,
+        motd: "§aFrameMC Legacy Bungee Test".to_string(),
+        max_players: 10,
+        online_mode: false,
+        favicon: None,
+        session_server_url: None,
+        servers,
+        default_server: "spigot".to_string(),
+        script_path: "scripts/main.rhai".to_string(),
+        plugins_dir: "plugins".to_string(),
+    };
+
+    let listener = bind_listener(&config)
+        .await
+        .expect("Failed to bind proxy listener");
+    let proxy_port = listener.local_addr().unwrap().port();
+    config.bind_port = proxy_port;
+    let config = Arc::new(config);
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let script_host = Arc::new(ScriptHost::new());
+    let proxy_handle = tokio::spawn(start_listener_on(
+        listener,
+        config,
+        script_host,
+        shutdown_rx,
+    ));
+
+    let mut client_stream = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
+        .await
+        .expect("Failed to connect to proxy");
+
+    let handshake = HandshakePacket::new(765, "127.0.0.1", proxy_port, ConnectionState::Login);
+    write_packet(&mut client_stream, &handshake.encode())
+        .await
+        .unwrap();
+
+    let client_uuid = Uuid::parse_str("50ffad28-75c9-35b1-af41-768e70a4d3e9").unwrap();
+    let login_start = LoginStartPacket::new("v4mphire", client_uuid);
+    write_packet(&mut client_stream, &login_start.encode())
+        .await
+        .unwrap();
+
+    let resp = read_packet(&mut client_stream, DEFAULT_MAX_PACKET_SIZE)
+        .await
+        .unwrap();
+    assert_eq!(resp.id, 0x02, "Expected LoginSuccess (0x02)");
+    let decoded = LoginSuccessPacket::decode(&resp).unwrap();
+    assert_eq!(decoded.username, "v4mphire");
+
+    spigot_task.await.unwrap();
+
+    drop(client_stream);
+    let _ = shutdown_tx.send(true);
+    let _ = proxy_handle.await;
+}
