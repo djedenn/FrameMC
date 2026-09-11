@@ -213,7 +213,7 @@ impl ScriptHost {
             });
         }
 
-        tracing::info!("Successfully loaded plugin '{}' from '{}'", name, path);
+        tracing::debug!("Successfully loaded plugin '{}' from '{}'", name, path);
         Ok(())
     }
 
@@ -252,7 +252,7 @@ impl ScriptHost {
             }
         }
 
-        tracing::info!("Loaded {} plugin(s) from '{}'", loaded, dir_path);
+        tracing::info!("[FrameMC] Loaded {} plugin(s) from '{}'", loaded, dir_path);
         Ok(loaded)
     }
 
@@ -287,7 +287,7 @@ impl ScriptHost {
 
         let mut ast_guard = self.ast.write().await;
         *ast_guard = new_ast;
-        tracing::info!("Successfully loaded and compiled Rhai script from '{path}'");
+        tracing::info!("[FrameMC] Loaded main script from '{path}'");
         Ok(())
     }
 

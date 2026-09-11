@@ -17,9 +17,9 @@ For architecture details, setup steps, or configuration options, see:
 - [2. Protocol Wire Formats, Handshake & Compression (24 Tests)](#2-protocol-wire-formats-handshake--compression-24-tests)
 - [3. Login Authentication & Forwarding Handshakes (25 Tests)](#3-login-authentication--forwarding-handshakes-25-tests)
 - [4. Modern Configuration & Registry Caching (7 Tests)](#4-modern-configuration--registry-caching-7-tests)
-- [5. Play State Machine, Server Switching & Bridge (43 Tests)](#5-play-state-machine-server-switching--bridge-43-tests)
+- [5. Play State Machine, Server Switching & Bridge (46 Tests)](#5-play-state-machine-server-switching--bridge-46-tests)
 - [6. Sandboxed Rhai Scripting Engine & Plugins (18 Tests)](#6-sandboxed-rhai-scripting-engine--plugins-18-tests)
-- [7. Configuration, Network Listener & Integration Tests (21 Tests)](#7-configuration-network-listener--integration-tests-21-tests)
+- [7. Configuration, Network Listener & Integration Tests (22 Tests)](#7-configuration-network-listener--integration-tests-22-tests)
 - [8. Command-Line Interface & Application Lifecycle (6 Tests)](#8-command-line-interface--application-lifecycle-6-tests)
 
 ---
@@ -28,8 +28,8 @@ For architecture details, setup steps, or configuration options, see:
 
 ```text
 ===============================================================================
-Total Test Invocations:   153
-Passed:                   153
+Total Test Invocations:   157
+Passed:                   157
 Failed:                     0
 Ignored / Filtered:         0
 Success Rate:             100%
@@ -43,7 +43,7 @@ Tested Protocols:         Minecraft 1.20.4 through 1.21.4+ (Protocols 764 – 77
 
 ### Bash (Linux / macOS):
 ```bash
-# Run all 152 tests
+# Run all 157 tests
 cargo test --all-targets
 
 # Run tests with real-time names and stdout/stderr output
@@ -177,7 +177,7 @@ Minecraft 1.20.2 overhauled connection handshakes by introducing an independent 
 
 ---
 
-## 5. Play State Machine, Server Switching & Bridge (43 Tests)
+## 5. Play State Machine, Server Switching & Bridge (46 Tests)
 
 Once players enter the Play state, FrameMC routes commands and switches servers without dropping the client socket. We verify Brigadier command tree injection (so `/server` and `/lobby` appear in the client's tab-completion HUD), mid-game transfers across different compression thresholds, state sanitization (closing container GUIs, stopping active audio, clearing scoreboards and bossbars), and failover routing when an active backend crashes unexpectedly.
 
@@ -199,6 +199,9 @@ Once players enter the Play state, FrameMC routes commands and switches servers 
 | `test_inject_proxy_commands_with_multibyte_root_index` | `routing::state_machine` | Brigadier root index spanning multi-byte VarInt values | ✅ Passed |
 | `test_inject_proxy_commands_legacy_version_unmodified` | `routing::state_machine` | Legacy protocol versions bypass Brigadier tree manipulation safely | ✅ Passed |
 | `test_inject_proxy_commands_malformed_root_index_unmodified` | `routing::state_machine` | Malformed command trees preserved intact without panic | ✅ Passed |
+| `test_is_declare_commands_packet_across_versions` | `routing::state_machine` | Exact DeclareCommands packet ID mapping across all protocol versions | ✅ Passed |
+| `test_handle_backend_packet_injects_declare_commands` | `routing::state_machine` | DeclareCommands interception in Play state and command injection | ✅ Passed |
+| `test_handle_backend_packet_injects_declare_commands_compressed` | `routing::state_machine` | DeclareCommands interception with compression threshold active | ✅ Passed |
 | `test_is_login_play_packet_across_versions` | `routing::state_machine` | Login (Play) packet ID resolution across protocol versions | ✅ Passed |
 | `test_is_login_play_packet_comprehensive` | `routing::state_machine` | Comprehensive validation of Login (Play) packet layouts | ✅ Passed |
 | `test_extract_respawn_from_login_modern_776` | `routing::state_machine` | Respawn packet synthesized from downstream Login (Play) for 1.21.4+ | ✅ Passed |
@@ -256,7 +259,7 @@ Scripts should never be able to freeze the Tokio reactor or chew through memory.
 
 ---
 
-## 7. Configuration, Network Listener & Integration Tests (20 Tests)
+## 7. Configuration, Network Listener & Integration Tests (21 Tests)
 
 These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against a live SteelMC instance.
 
@@ -282,6 +285,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 | `test_offline_mode_login_over_tcp` | `tests/login_auth_test.rs` | Real TCP offline mode handshake and LoginSuccess exchange | ✅ Passed |
 | `test_offline_mode_login_protocol_776_over_tcp` | `tests/login_auth_test.rs` | Real TCP Protocol 776 (1.21.4+) offline login flow | ✅ Passed |
 | `test_online_mode_case_insensitive_username_matches` | `tests/login_auth_test.rs` | Real TCP login with mixed-case username matching Mojang profile | ✅ Passed |
+| `test_live_server_transfer_steelmc_and_paper` | `tests/transfer_live_test.rs` | Live loopback server switching with compression negotiation and Brigadier tree injection | ✅ Passed |
 
 ---
 

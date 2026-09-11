@@ -219,7 +219,7 @@ pub async fn start_listener(
     shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), ProxyError> {
     let listener = bind_listener(&config).await?;
-    tracing::info!("Proxy TCP listener active on {}", listener.local_addr()?);
+    tracing::info!("[FrameMC] Proxy listening on {}", listener.local_addr()?);
     start_listener_on(listener, config, script_host, shutdown_rx).await
 }
 
@@ -449,7 +449,7 @@ pub async fn handle_login<S: AsyncRead + AsyncWrite + Unpin>(
     write_packet(&mut stream, &raw_login_success).await?;
     stream.flush().await?;
 
-    tracing::info!(
+    tracing::debug!(
         username = %profile.name,
         uuid = %profile.id,
         session_id = ?session_id,
@@ -626,7 +626,7 @@ async fn process_connection(
                 }
                 let threshold = thresh as usize;
                 compression_threshold = Some(threshold);
-                tracing::info!(%client_addr, threshold, "Backend enabled compression; synchronizing with client");
+                tracing::debug!(%client_addr, threshold, "Backend enabled compression; synchronizing with client");
 
                 // Forward SetCompression (0x03) uncompressed to client
                 write_packet(&mut active_stream, &backend_login_pkt).await?;
@@ -727,7 +727,7 @@ async fn process_connection(
             active_stream.write_all(&success_wire).await?;
             active_stream.flush().await?;
 
-            tracing::info!(
+            tracing::debug!(
                 username = %profile.name,
                 uuid = %profile.id,
                 session_id = ?session_id,
@@ -760,7 +760,7 @@ async fn process_connection(
                     }
                 };
                 let _ = LoginAcknowledgedPacket::decode(&client_ack_raw)?;
-                tracing::info!(%client_addr, "Received LoginAcknowledged from client");
+                tracing::debug!(%client_addr, "Received LoginAcknowledged from client");
 
                 // Forward LoginAcknowledged (0x03) to backend to transition backend to Configuration state
                 let ack = LoginAcknowledgedPacket::new();
@@ -771,7 +771,7 @@ async fn process_connection(
                 )
                 .await?;
                 let _ = backend_stream.flush().await;
-                tracing::info!(%client_addr, "Forwarded LoginAcknowledged to backend; entering Configuration state");
+                tracing::debug!(%client_addr, "Forwarded LoginAcknowledged to backend; entering Configuration state");
 
                 // 14. Configuration State Bridging
                 let mut client_finished_config = false;
@@ -801,7 +801,7 @@ async fn process_connection(
                             }
                             if pkt.id == backend_finish_id {
                                 backend_finished_config = true;
-                                tracing::info!(%client_addr, "Backend sent FinishConfiguration (0x{:02X})", pkt.id);
+                                tracing::debug!(%client_addr, "Backend sent FinishConfiguration (0x{:02X})", pkt.id);
                             }
                             if pkt.id == backend_disconnect_id {
                                 tracing::warn!(%client_addr, "Backend disconnected client during Configuration state");
@@ -824,7 +824,7 @@ async fn process_connection(
                                 || (handshake.protocol_version < 766 && pkt.id == 0x02)
                             {
                                 client_finished_config = true;
-                                tracing::info!(%client_addr, "Client sent FinishConfiguration (0x{:02X})", pkt.id);
+                                tracing::debug!(%client_addr, "Client sent FinishConfiguration (0x{:02X})", pkt.id);
                             }
                             write_packet_with_compression(&mut backend_stream, &pkt, compression_threshold).await?;
                             let _ = backend_stream.flush().await;
@@ -843,11 +843,10 @@ async fn process_connection(
             }
 
             tracing::info!(
-                %client_addr,
-                username = %profile.name,
-                uuid = %profile.id,
-                server = %target_server_name,
-                "Configuration state complete; handing off to Play state machine"
+                "[FrameMC] Player {} [{}] connected -> {}",
+                profile.name,
+                client_addr.ip(),
+                target_server_name
             );
 
             // 15. Transition to ConnectionState::Play and hand off to PlayStateMachine [R-02], [R-10], [R-11]

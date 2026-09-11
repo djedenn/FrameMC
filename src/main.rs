@@ -74,13 +74,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    struct ConsoleTimestamp;
+
+    impl tracing_subscriber::fmt::time::FormatTime for ConsoleTimestamp {
+        fn format_time(
+            &self,
+            w: &mut tracing_subscriber::fmt::format::Writer<'_>,
+        ) -> std::fmt::Result {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let seconds = now % 60;
+            let minutes = (now / 60) % 60;
+            let hours = (now / 3600) % 24;
+            write!(w, "[{:02}:{:02}:{:02}]", hours, minutes, seconds)
+        }
+    }
+
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(ConsoleTimestamp)
+                .compact(),
+        )
         .init();
 
     tracing::info!(
-        "Starting FrameMC Minecraft Proxy using config: {}",
+        "[FrameMC] Starting Minecraft Proxy using config: {}",
         config_path
     );
 
@@ -95,17 +118,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Load plugins from plugins directory
-    match script_host.load_plugins_dir(&config.plugins_dir).await {
-        Ok(count) => tracing::info!("Loaded {count} plugin(s) from '{}'", config.plugins_dir),
-        Err(e) => tracing::warn!("Failed loading plugins from '{}': {e}", config.plugins_dir),
+    if let Err(e) = script_host.load_plugins_dir(&config.plugins_dir).await {
+        tracing::warn!("Failed loading plugins from '{}': {e}", config.plugins_dir);
     }
 
     // Load main script if configured and present
     if std::path::Path::new(&config.script_path).exists() {
         if let Err(e) = script_host.reload(&config.script_path).await {
             tracing::warn!("Failed loading script at '{}': {e}", config.script_path);
-        } else {
-            tracing::info!("Loaded script at '{}'", config.script_path);
         }
     }
 

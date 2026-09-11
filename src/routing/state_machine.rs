@@ -165,7 +165,9 @@ impl ServerboundChatCommand {
     }
 
     pub fn is_command_packet(id: i32, protocol_version: i32) -> bool {
-        if protocol_version >= 768 {
+        if protocol_version >= 776 {
+            id == 0x07 || id == 0x08 || id == 0x09
+        } else if protocol_version >= 768 {
             id == 0x05 || id == 0x06 || id == 0x07
         } else if protocol_version >= 766 {
             id == 0x04 || id == 0x05 || id == 0x06
@@ -214,7 +216,9 @@ impl ServerboundChatCommand {
     }
 
     pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
-        let packet_id = if protocol_version >= 768 {
+        let packet_id = if protocol_version >= 776 {
+            0x07
+        } else if protocol_version >= 768 {
             0x05
         } else if protocol_version >= 766 {
             0x04
@@ -253,7 +257,9 @@ impl TabCompleteRequestPacket {
     }
 
     pub fn is_tab_complete_request(id: i32, protocol_version: i32) -> bool {
-        if protocol_version >= 768 {
+        if protocol_version >= 776 {
+            id == 0x0F
+        } else if protocol_version >= 768 {
             id == 0x0D || id == 0x0F
         } else if protocol_version >= 766 {
             id == 0x0B
@@ -296,8 +302,10 @@ impl TabCompleteRequestPacket {
     }
 
     pub fn encode_with_version(&self, protocol_version: i32) -> RawPacket {
-        let packet_id = if protocol_version >= 768 {
-            0x0D // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
+        let packet_id = if protocol_version >= 776 {
+            0x0F
+        } else if protocol_version >= 768 {
+            0x0D // 1.21.2 - 1.21.4 (protocols 768 - 775)
         } else if protocol_version >= 766 {
             0x0B // 1.20.5 - 1.21.1
         } else if protocol_version >= 764 {
@@ -334,8 +342,10 @@ impl TabCompleteResponsePacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 764 {
-            0x10 // 1.20.2 through 1.21.4+ (protocols 764 - 776+)
+        if protocol_version >= 776 {
+            0x0F // 1.21.5 / 26.2 (protocol 776+)
+        } else if protocol_version >= 764 {
+            0x10 // 1.20.2 through 1.21.4 (protocols 764 - 775)
         } else {
             0x0F
         }
@@ -442,13 +452,15 @@ impl RespawnPacket {
     pub fn is_valid_respawn_id(id: i32) -> bool {
         matches!(
             id,
-            0x52 | 0x4C | 0x47 | 0x45 | 0x43 | 0x3F | 0x3E | 0x3D | 0x39 | 0x35
+            0x52 | 0x51 | 0x4C | 0x4A | 0x47 | 0x45 | 0x43 | 0x3F | 0x3E | 0x3D | 0x39 | 0x35
         )
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 768 {
-            0x4C // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
+        if protocol_version >= 776 {
+            0x52 // 1.21.5 / 26.2 (protocol 776+)
+        } else if protocol_version >= 768 {
+            0x4C // 1.21.2 - 1.21.4 (protocols 768 - 775)
         } else if protocol_version >= 766 {
             0x47
         } else if protocol_version >= 764 {
@@ -780,8 +792,10 @@ impl RespawnPacket {
 /// Returns true if the given packet ID corresponds to the clientbound Login (Play) / JoinGame packet
 /// for the specified protocol version.
 pub fn is_login_play_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 768 {
-        id == 0x2C // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
+    if protocol_version >= 776 {
+        id == 0x31 // 1.21.5 / 26.2 (protocol 776+)
+    } else if protocol_version >= 768 {
+        id == 0x2C // 1.21.2 - 1.21.4 (protocols 768 - 775)
     } else if protocol_version >= 766 {
         id == 0x2B
     } else if protocol_version >= 764 {
@@ -1086,8 +1100,24 @@ pub fn extract_respawn_from_login(
 }
 
 /// Returns true if the packet ID corresponds to the clientbound DeclareCommands packet.
-pub fn is_declare_commands_packet(id: i32, _protocol_version: i32) -> bool {
-    id == 0x11 || id == 0x12 || id == 0x10
+pub fn is_declare_commands_packet(id: i32, protocol_version: i32) -> bool {
+    if protocol_version >= 776 {
+        id == 0x10 // 1.21.5 / 26.2 (protocol 776+)
+    } else if protocol_version >= 764 {
+        id == 0x11 // 1.20.2 through 1.21.4 (protocols 764 - 775)
+    } else if protocol_version >= 762 {
+        id == 0x0F // 1.19.4 - 1.20.1
+    } else if protocol_version >= 759 {
+        id == 0x0E // 1.19 - 1.19.3
+    } else if protocol_version >= 755 {
+        id == 0x12 // 1.17 - 1.18.2
+    } else if protocol_version >= 735 {
+        id == 0x10 // 1.16 - 1.16.5
+    } else if protocol_version >= 393 {
+        id == 0x11 // 1.13 - 1.15.2
+    } else {
+        false
+    }
 }
 
 /// Injects FrameMC proxy commands (`server`, `hub`, `lobby`, `steel`, etc.) into the backend's
@@ -1102,10 +1132,7 @@ pub fn inject_proxy_commands_into_declare_commands(
         return Ok(packet.clone());
     }
 
-    if !is_declare_commands_packet(packet.id, protocol_version)
-        && packet.id != 0x10
-        && packet.id != 0x11
-    {
+    if !is_declare_commands_packet(packet.id, protocol_version) {
         return Ok(packet.clone());
     }
 
@@ -1277,12 +1304,17 @@ impl SystemChatMessagePacket {
     }
 
     pub fn is_valid_system_chat_id(id: i32) -> bool {
-        matches!(id, 0x79 | 0x73 | 0x6C | 0x67 | 0x64 | 0x60 | 0x5F | 0x69)
+        matches!(
+            id,
+            0x79 | 0x78 | 0x73 | 0x70 | 0x6C | 0x67 | 0x64 | 0x60 | 0x5F | 0x69
+        )
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 768 {
-            0x73 // 1.21.2 - 1.21.4+ (protocols 768 - 776+)
+        if protocol_version >= 776 {
+            0x79 // 1.21.5 / 26.2 (protocol 776+)
+        } else if protocol_version >= 768 {
+            0x73 // 1.21.2 - 1.21.4 (protocols 768 - 775)
         } else if protocol_version >= 766 {
             0x6C
         } else if protocol_version >= 764 {
@@ -1444,7 +1476,9 @@ impl CloseContainerPacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 764 {
+        if protocol_version >= 776 {
+            0x11
+        } else if protocol_version >= 764 {
             CLOSE_CONTAINER_PACKET_ID
         } else if protocol_version >= 762 {
             0x11
@@ -1527,7 +1561,9 @@ impl StopSoundPacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 768 {
+        if protocol_version >= 776 {
+            0x77
+        } else if protocol_version >= 768 {
             0x71
         } else if protocol_version >= 766 {
             0x6A
@@ -1639,7 +1675,9 @@ impl BossBarPacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 764 {
+        if protocol_version >= 776 {
+            0x09
+        } else if protocol_version >= 764 {
             BOSS_BAR_PACKET_ID
         } else if protocol_version >= 762 {
             0x0B
@@ -1699,7 +1737,9 @@ impl ScoreboardObjectivePacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 768 {
+        if protocol_version >= 776 {
+            0x6A
+        } else if protocol_version >= 768 {
             0x64
         } else if protocol_version >= 766 {
             0x5E
@@ -1782,7 +1822,9 @@ impl DisplayObjectivePacket {
     }
 
     pub fn packet_id_for_version(protocol_version: i32) -> i32 {
-        if protocol_version >= 768 {
+        if protocol_version >= 776 {
+            0x62
+        } else if protocol_version >= 768 {
             0x5C
         } else if protocol_version >= 766 {
             0x57
@@ -1841,7 +1883,9 @@ impl DisplayObjectivePacket {
 
 /// Returns true if the packet ID corresponds to clientbound Open Screen / Window.
 pub fn is_open_window_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 768 {
+    if protocol_version >= 776 {
+        id == 0x3B
+    } else if protocol_version >= 768 {
         id == 0x35
     } else if protocol_version >= 766 {
         id == 0x33
@@ -1858,7 +1902,9 @@ pub fn is_open_window_packet(id: i32, protocol_version: i32) -> bool {
 
 /// Returns true if the packet ID corresponds to clientbound sound effects.
 pub fn is_sound_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 768 {
+    if protocol_version >= 776 {
+        id == 0x75 || id == 0x74
+    } else if protocol_version >= 768 {
         id == 0x6F || id == 0x6E
     } else if protocol_version >= 766 {
         id == 0x68 || id == 0x67
@@ -1873,7 +1919,9 @@ pub fn is_sound_packet(id: i32, protocol_version: i32) -> bool {
 
 /// Returns true if the packet ID corresponds to serverbound Close Container / Window.
 pub fn is_serverbound_close_container_packet(id: i32, protocol_version: i32) -> bool {
-    if protocol_version >= 768 {
+    if protocol_version >= 776 {
+        id == 0x13
+    } else if protocol_version >= 768 {
         id == 0x11
     } else if protocol_version >= 766 {
         id == 0x0F
@@ -2020,10 +2068,10 @@ impl PlayStateMachine {
         };
 
         tracing::info!(
-            player = %self.session.profile.name,
-            from = %self.session.current_server,
-            to = %target_server,
-            "Initiating server transfer sequence"
+            "[FrameMC] Player {} transferring: {} -> {}",
+            self.session.profile.name,
+            self.session.current_server,
+            target_server
         );
 
         // 1. Connect to new target backend (performs handshake, login, and acknowledges login if modern)
@@ -2252,7 +2300,7 @@ impl PlayStateMachine {
         self.session.current_server = target_server.to_string();
         self.server_transferred = true;
 
-        tracing::info!(
+        tracing::debug!(
             player = %self.session.profile.name,
             server = %self.session.current_server,
             "Server transfer handshake completed; awaiting backend Login (Play) packet"
@@ -2282,7 +2330,13 @@ impl PlayStateMachine {
             {
                 // If it came as a chat_message packet, only intercept if it begins with '/'
                 let is_chat_packet = (self.session.protocol_version < 766 && packet.id == 0x06)
-                    || (self.session.protocol_version >= 766 && packet.id == 0x09);
+                    || (self.session.protocol_version >= 766
+                        && self.session.protocol_version < 768
+                        && packet.id == 0x06)
+                    || (self.session.protocol_version >= 768
+                        && self.session.protocol_version < 776
+                        && packet.id == 0x07)
+                    || (self.session.protocol_version >= 776 && packet.id == 0x09);
                 let should_intercept = !is_chat_packet || cmd_packet.command.starts_with('/');
 
                 if should_intercept {
@@ -2511,7 +2565,7 @@ impl PlayStateMachine {
 
         // Check for Login (Play) packet (0x31 on 775+, 0x2C on 768+, 0x2B on 766+, etc.)
         if is_login_play_packet(packet.id, self.session.protocol_version) {
-            tracing::info!(
+            tracing::debug!(
                 player = %self.session.profile.name,
                 server = %self.session.current_server,
                 packet_id = packet.id,
@@ -2549,6 +2603,11 @@ impl PlayStateMachine {
                 .await?;
                 let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
                 tracing::info!(
+                    "[FrameMC] Player {} transferred to {}",
+                    self.session.profile.name,
+                    self.session.current_server
+                );
+                tracing::debug!(
                     player = %self.session.profile.name,
                     server = %self.session.current_server,
                     data_kept = data_kept,
@@ -2565,6 +2624,43 @@ impl PlayStateMachine {
                 let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
             }
 
+            return Ok(true);
+        }
+
+        // Intercept DeclareCommands packet to inject proxy commands and backend servers for client-side autocomplete
+        if is_declare_commands_packet(packet.id, self.session.protocol_version) {
+            let mut servers: Vec<String> = self.config.servers.keys().cloned().collect();
+            servers.sort();
+            let final_packet = match inject_proxy_commands_into_declare_commands(
+                &packet,
+                self.session.protocol_version,
+                &servers,
+            ) {
+                Ok(injected) => {
+                    tracing::debug!(
+                        player = %self.session.profile.name,
+                        server = %self.session.current_server,
+                        "Injected proxy commands into DeclareCommands packet"
+                    );
+                    injected
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        player = %self.session.profile.name,
+                        error = %e,
+                        "Failed to inject proxy commands into DeclareCommands, forwarding original"
+                    );
+                    packet
+                }
+            };
+
+            write_packet_with_compression(
+                &mut self.client,
+                &final_packet,
+                self.client_compression_threshold,
+            )
+            .await?;
+            let _ = tokio::io::AsyncWriteExt::flush(&mut self.client).await;
             return Ok(true);
         }
 
@@ -2704,7 +2800,7 @@ impl PlayStateMachine {
         &mut self,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), ProxyError> {
-        tracing::info!(
+        tracing::debug!(
             player = %self.session.profile.name,
             server = %self.session.current_server,
             "Entering Play state routing loop with packet inspection"
@@ -2728,6 +2824,10 @@ impl PlayStateMachine {
                             }
                         }
                         Err(e) => {
+                            tracing::info!(
+                                "[FrameMC] Player {} disconnected",
+                                self.session.profile.name
+                            );
                             tracing::debug!(player = %self.session.profile.name, "Client disconnected from Play state: {e}");
                             break;
                         }
@@ -2937,8 +3037,8 @@ pub mod tests {
             SystemChatMessagePacket::new("§6[FrameMC] §eYou are currently on: §asteelmc", false);
         let raw_776 = msg.encode_with_version(776);
         assert_eq!(
-            raw_776.id, 0x73,
-            "Protocol 776 system chat packet ID must be 0x73 (115)"
+            raw_776.id, 0x79,
+            "Protocol 776 system chat packet ID must be 0x79 (121)"
         );
         assert_eq!(
             raw_776.payload[0], 0x0A,
@@ -2958,17 +3058,18 @@ pub mod tests {
         let respawn = RespawnPacket::default_reset();
         let raw_776 = respawn.encode_with_version(776);
         assert_eq!(
-            raw_776.id, 0x4C,
-            "Protocol 776 respawn packet ID must be 0x4C (76)"
+            raw_776.id, 0x52,
+            "Protocol 776 respawn packet ID must be 0x52 (82)"
         );
     }
 
     #[test]
     fn test_command_packet_detection_across_protocols() {
-        assert!(ServerboundChatCommand::is_command_packet(0x05, 776));
-        assert!(ServerboundChatCommand::is_command_packet(0x06, 776));
         assert!(ServerboundChatCommand::is_command_packet(0x07, 776));
+        assert!(ServerboundChatCommand::is_command_packet(0x08, 776));
+        assert!(ServerboundChatCommand::is_command_packet(0x09, 776));
         assert!(!ServerboundChatCommand::is_command_packet(0x04, 776));
+        assert!(!ServerboundChatCommand::is_command_packet(0x05, 776));
 
         assert!(ServerboundChatCommand::is_command_packet(0x05, 768));
         assert!(ServerboundChatCommand::is_command_packet(0x04, 765));
@@ -3274,7 +3375,10 @@ pub mod tests {
 
     #[test]
     fn test_is_login_play_packet_across_versions() {
-        assert!(is_login_play_packet(0x2C, 776));
+        assert!(is_login_play_packet(0x31, 776));
+        assert!(!is_login_play_packet(0x30, 776));
+        assert!(!is_login_play_packet(0x2D, 776));
+        assert!(!is_login_play_packet(0x2C, 776));
         assert!(is_login_play_packet(0x2C, 775));
         assert!(is_login_play_packet(0x2C, 768));
         assert!(is_login_play_packet(0x2C, 774));
@@ -3289,7 +3393,7 @@ pub mod tests {
 
     #[test]
     fn test_extract_respawn_from_login_modern_776() {
-        // Construct synthetic Login (Play) packet for version 776 (id = 0x31)
+        // Construct synthetic Login (Play) packet for version 776 (id = 0x2D)
         let mut payload = BytesMut::new();
         // 1. entity_id: i32 (4 bytes)
         payload.put_i32(42);
@@ -3342,12 +3446,12 @@ pub mod tests {
         // 12. enforces_secure_chat: bool (1 byte)
         payload.put_u8(0);
 
-        let login_pkt = RawPacket::new(0x2C, payload.freeze());
+        let login_pkt = RawPacket::new(0x31, payload.freeze());
         let expected_spawn_info = &login_pkt.payload[spawn_info_start..spawn_info_end];
 
         let respawn_pkt =
             extract_respawn_from_login(&login_pkt, 776).expect("Respawn extraction failed");
-        assert_eq!(respawn_pkt.id, 0x4C); // Respawn ID on protocol >= 768
+        assert_eq!(respawn_pkt.id, 0x52); // Respawn ID on protocol >= 776
         assert_eq!(respawn_pkt.payload.len(), expected_spawn_info.len() + 1);
         assert_eq!(
             &respawn_pkt.payload[..expected_spawn_info.len()],
@@ -3545,7 +3649,10 @@ pub mod tests {
 
     #[test]
     fn test_is_login_play_packet_comprehensive() {
-        assert!(is_login_play_packet(0x2C, 776));
+        assert!(is_login_play_packet(0x31, 776));
+        assert!(!is_login_play_packet(0x30, 776));
+        assert!(!is_login_play_packet(0x2D, 776));
+        assert!(!is_login_play_packet(0x2C, 776));
         assert!(is_login_play_packet(0x2C, 775));
         assert!(is_login_play_packet(0x2C, 768));
         assert!(is_login_play_packet(0x2B, 766));
@@ -3567,7 +3674,7 @@ pub mod tests {
 
     #[test]
     fn test_system_chat_packet_ids_across_versions() {
-        assert_eq!(SystemChatMessagePacket::packet_id_for_version(776), 0x73);
+        assert_eq!(SystemChatMessagePacket::packet_id_for_version(776), 0x79);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(775), 0x73);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(768), 0x73);
         assert_eq!(SystemChatMessagePacket::packet_id_for_version(766), 0x6C);
@@ -3580,7 +3687,7 @@ pub mod tests {
 
         // Verify valid packet ids decoded
         for (proto, id) in [
-            (776, 0x73),
+            (776, 0x79),
             (768, 0x73),
             (766, 0x6C),
             (764, 0x69),
@@ -3599,7 +3706,7 @@ pub mod tests {
 
     #[test]
     fn test_respawn_packet_ids_across_versions() {
-        assert_eq!(RespawnPacket::packet_id_for_version(776), 0x4C);
+        assert_eq!(RespawnPacket::packet_id_for_version(776), 0x52);
         assert_eq!(RespawnPacket::packet_id_for_version(775), 0x4C);
         assert_eq!(RespawnPacket::packet_id_for_version(768), 0x4C);
         assert_eq!(RespawnPacket::packet_id_for_version(766), 0x47);
@@ -3615,7 +3722,7 @@ pub mod tests {
         // Test modern decode (776)
         let respawn = RespawnPacket::default_reset();
         let encoded_776 = respawn.encode_with_version(776);
-        assert_eq!(encoded_776.id, 0x4C);
+        assert_eq!(encoded_776.id, 0x52);
         let decoded_776 = RespawnPacket::decode_with_version(&encoded_776, 776).unwrap();
         assert_eq!(decoded_776.dimension_name, "minecraft:overworld");
         assert_eq!(decoded_776.data_kept, 0);
@@ -3838,7 +3945,7 @@ pub mod tests {
             assert_eq!(decoded.window_id, 5);
         }
 
-        assert_eq!(CloseContainerPacket::packet_id_for_version(776), 0x12);
+        assert_eq!(CloseContainerPacket::packet_id_for_version(776), 0x11);
         assert_eq!(CloseContainerPacket::packet_id_for_version(775), 0x12);
         assert_eq!(CloseContainerPacket::packet_id_for_version(768), 0x12);
         assert_eq!(CloseContainerPacket::packet_id_for_version(765), 0x12);
@@ -3891,7 +3998,8 @@ pub mod tests {
             assert_eq!(dec_both.sound.as_deref(), Some("minecraft:ambient.cave"));
         }
 
-        assert_eq!(StopSoundPacket::packet_id_for_version(776), 0x71);
+        assert_eq!(StopSoundPacket::packet_id_for_version(776), 0x77);
+        assert_eq!(StopSoundPacket::packet_id_for_version(775), 0x71);
         assert_eq!(StopSoundPacket::packet_id_for_version(768), 0x71);
         assert_eq!(StopSoundPacket::packet_id_for_version(766), 0x6A);
         assert_eq!(StopSoundPacket::packet_id_for_version(765), 0x68);
@@ -3910,7 +4018,8 @@ pub mod tests {
             assert_eq!(decoded.action, BossBarPacket::ACTION_REMOVE);
         }
 
-        assert_eq!(BossBarPacket::packet_id_for_version(776), 0x0A);
+        assert_eq!(BossBarPacket::packet_id_for_version(776), 0x09);
+        assert_eq!(BossBarPacket::packet_id_for_version(775), 0x0A);
         assert_eq!(BossBarPacket::packet_id_for_version(768), 0x0A);
         assert_eq!(BossBarPacket::packet_id_for_version(763), 0x0B);
 
@@ -3934,7 +4043,8 @@ pub mod tests {
             assert_eq!(decoded.action, ScoreboardObjectivePacket::ACTION_REMOVE);
         }
 
-        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(776), 0x64);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(776), 0x6A);
+        assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(775), 0x64);
         assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(768), 0x64);
         assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(766), 0x5E);
         assert_eq!(ScoreboardObjectivePacket::packet_id_for_version(765), 0x5C);
@@ -3953,7 +4063,8 @@ pub mod tests {
             assert_eq!(decoded.name, "");
         }
 
-        assert_eq!(DisplayObjectivePacket::packet_id_for_version(776), 0x5C);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(776), 0x62);
+        assert_eq!(DisplayObjectivePacket::packet_id_for_version(775), 0x5C);
         assert_eq!(DisplayObjectivePacket::packet_id_for_version(768), 0x5C);
         assert_eq!(DisplayObjectivePacket::packet_id_for_version(766), 0x57);
         assert_eq!(DisplayObjectivePacket::packet_id_for_version(765), 0x55);
@@ -3993,13 +4104,13 @@ pub mod tests {
         payload.put_u8(0); // online_mode
         payload.put_u8(0); // enforces_secure_chat
 
-        let login_pkt = RawPacket::new(0x2C, payload.freeze());
+        let login_pkt = RawPacket::new(0x31, payload.freeze());
         let spawn_info_bytes = &login_pkt.payload[spawn_start..spawn_end];
 
         // 1. KEEP_ALL_DATA (0x03)
         let respawn_all = extract_respawn_from_login_with_data_kept(&login_pkt, 776, KEEP_ALL_DATA)
             .expect("extract failed");
-        assert_eq!(respawn_all.id, 0x4C);
+        assert_eq!(respawn_all.id, 0x52);
         assert_eq!(respawn_all.payload[spawn_info_bytes.len()], KEEP_ALL_DATA);
 
         // 2. KEEP_ATTRIBUTES (0x01)
@@ -4440,5 +4551,172 @@ pub mod tests {
         let decoded = DisplayObjectivePacket::decode(&pkt, 765).unwrap();
         assert_eq!(decoded.position, 1);
         assert!(decoded.name.is_empty());
+    }
+
+    #[test]
+    fn test_is_declare_commands_packet_across_versions() {
+        // Modern 1.21.5 / 26.2 (776+)
+        assert!(is_declare_commands_packet(0x10, 776));
+        assert!(!is_declare_commands_packet(0x11, 776));
+        assert!(!is_declare_commands_packet(0x0F, 776));
+
+        // 1.20.2 - 1.21.4 (protocols 764 - 775)
+        assert!(is_declare_commands_packet(0x11, 775));
+        assert!(is_declare_commands_packet(0x11, 768));
+        assert!(is_declare_commands_packet(0x11, 764));
+        // Crucial: 0x10 is TabCompleteResponse on 764-775, must NEVER match DeclareCommands!
+        assert!(!is_declare_commands_packet(0x10, 775));
+        assert!(!is_declare_commands_packet(0x10, 768));
+        assert!(!is_declare_commands_packet(0x10, 764));
+
+        // 1.19.4 - 1.20.1 (protocols 762 - 763)
+        assert!(is_declare_commands_packet(0x0F, 762));
+        assert!(is_declare_commands_packet(0x0F, 763));
+
+        // 1.19 - 1.19.3 (protocols 759 - 761)
+        assert!(is_declare_commands_packet(0x0E, 759));
+        assert!(is_declare_commands_packet(0x0E, 761));
+
+        // 1.17 - 1.18.2 (protocols 755 - 758)
+        assert!(is_declare_commands_packet(0x12, 755));
+        assert!(is_declare_commands_packet(0x12, 758));
+
+        // 1.16 - 1.16.5 (protocols 735 - 754)
+        assert!(is_declare_commands_packet(0x10, 735));
+        assert!(is_declare_commands_packet(0x10, 754));
+
+        // 1.13 - 1.15.2 (protocols 393 - 578)
+        assert!(is_declare_commands_packet(0x11, 393));
+        assert!(is_declare_commands_packet(0x11, 578));
+
+        // Legacy 1.12.2 and older (< 393): DeclareCommands does not exist
+        assert!(!is_declare_commands_packet(0x11, 340));
+        assert!(!is_declare_commands_packet(0x10, 340));
+    }
+
+    #[tokio::test]
+    async fn test_handle_backend_packet_injects_declare_commands() {
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let mut config = sample_config();
+        config.servers.insert(
+            "steelmc".to_string(),
+            crate::config::BackendConfig {
+                address: "127.0.0.1".to_string(),
+                port: 25567,
+                forwarding_mode: crate::config::ForwardingMode::None,
+                forwarding_secret: None,
+            },
+        );
+        let config = Arc::new(config);
+        let connector = Arc::new(MockBackendConnector::new());
+        let host = Arc::new(ScriptHost::new());
+        let mut session = sample_session();
+        session.protocol_version = 776;
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            session,
+            config,
+            host,
+            None,
+        );
+
+        // Construct synthetic DeclareCommands packet (ID 0x10 on 776)
+        // Node 0: Root (flags = 0, child_count = 1, children = [1])
+        // Node 1: Literal "help" (flags = 0x05, child_count = 0, name = "help")
+        // rootIndex: 0
+        let mut payload = BytesMut::new();
+        encode_varint(2, &mut payload); // 2 nodes
+        payload.put_u8(0x00); // flags Node 0
+        encode_varint(1, &mut payload); // 1 child
+        encode_varint(1, &mut payload); // child index 1
+        payload.put_u8(0x05); // flags Node 1
+        encode_varint(0, &mut payload); // 0 children
+        encode_varint(4, &mut payload);
+        payload.put_slice(b"help");
+        payload.put_u8(0x00); // trailing rootIndex = 0
+
+        let declare_pkt = RawPacket::new(0x10, payload.freeze());
+
+        // Process DeclareCommands through handle_backend_packet
+        let handled = sm.handle_backend_packet(declare_pkt).await.unwrap();
+        assert!(handled);
+
+        // Client should receive the injected DeclareCommands packet
+        let client_pkt = read_packet(&mut client_reader, 65536).await.unwrap();
+        assert_eq!(client_pkt.id, 0x10);
+
+        let mut cursor = &client_pkt.payload[..];
+        let new_count = decode_varint(&mut cursor).unwrap();
+        // Original 2 + 6 injected (server, name, hub, lobby, steel, steelmc) = 8
+        assert_eq!(new_count, 8);
+
+        // Node 0 Root
+        assert_eq!(cursor.get_u8(), 0x00);
+        let root_children_count = decode_varint(&mut cursor).unwrap();
+        assert_eq!(root_children_count, 6);
+        let mut children = Vec::new();
+        for _ in 0..root_children_count {
+            children.push(decode_varint(&mut cursor).unwrap());
+        }
+        assert_eq!(children[0], 1); // "help"
+        assert_eq!(children[1], 2); // "server"
+        assert_eq!(children[2], 4); // "hub"
+        assert_eq!(children[3], 5); // "lobby"
+        assert_eq!(children[4], 6); // "steel"
+        assert_eq!(children[5], 7); // "steelmc"
+    }
+
+    #[tokio::test]
+    async fn test_handle_backend_packet_injects_declare_commands_compressed() {
+        let (client_writer, mut client_reader) = duplex(65536);
+        let (_lobby_client, lobby_backend) = duplex(65536);
+
+        let config = Arc::new(sample_config());
+        let connector = Arc::new(MockBackendConnector::new());
+        let host = Arc::new(ScriptHost::new());
+        let mut session = sample_session();
+        session.protocol_version = 776;
+
+        let mut sm = PlayStateMachine::new(
+            Box::new(client_writer),
+            Box::new(lobby_backend),
+            connector,
+            session,
+            config,
+            host,
+            Some(256), // Compression active with threshold 256
+        );
+
+        let mut payload = BytesMut::new();
+        encode_varint(2, &mut payload);
+        payload.put_u8(0x00);
+        encode_varint(1, &mut payload);
+        encode_varint(1, &mut payload);
+        payload.put_u8(0x05);
+        encode_varint(0, &mut payload);
+        encode_varint(4, &mut payload);
+        payload.put_slice(b"help");
+        payload.put_u8(0x00);
+
+        let declare_pkt = RawPacket::new(0x10, payload.freeze());
+
+        let handled = sm.handle_backend_packet(declare_pkt).await.unwrap();
+        assert!(handled);
+
+        // Client receives compressed packet
+        let client_pkt = read_packet_with_compression(&mut client_reader, 65536, Some(256))
+            .await
+            .unwrap();
+        assert_eq!(client_pkt.id, 0x10);
+
+        let mut cursor = &client_pkt.payload[..];
+        let new_count = decode_varint(&mut cursor).unwrap();
+        // Original 2 + 6 injected (server, name, hub, lobby, steel, steelmc) = 8
+        assert_eq!(new_count, 8);
     }
 }
