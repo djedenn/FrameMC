@@ -61,7 +61,7 @@ RUST_LOG=framemc=debug cargo test test_full_status_ping_flow_over_tcp -- --nocap
 
 ### PowerShell (Windows):
 ```powershell
-# Run all 152 tests
+# Run all 157 tests
 cargo test --all-targets
 
 # Run tests with verbose output
@@ -259,9 +259,9 @@ Scripts should never be able to freeze the Tokio reactor or chew through memory.
 
 ---
 
-## 7. Configuration, Network Listener & Integration Tests (21 Tests)
+## 7. Configuration, Network Listener & Integration Tests (22 Tests)
 
-These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against a live SteelMC instance.
+These integration tests bind real loopback TCP sockets on localhost. They execute end-to-end connection lifecycles: server list status queries (verifying base64 favicon delivery and ping/pong timestamp symmetry), RSA/AES authentication flows, and full bi-directional traffic bridging against live SteelMC and Paper backends.
 
 | Test Function | Location | Verification Scope | Status |
 | :--- | :--- | :--- | :---: |
@@ -285,7 +285,7 @@ These integration tests bind real loopback TCP sockets on localhost. They execut
 | `test_offline_mode_login_over_tcp` | `tests/login_auth_test.rs` | Real TCP offline mode handshake and LoginSuccess exchange | ✅ Passed |
 | `test_offline_mode_login_protocol_776_over_tcp` | `tests/login_auth_test.rs` | Real TCP Protocol 776 (1.21.4+) offline login flow | ✅ Passed |
 | `test_online_mode_case_insensitive_username_matches` | `tests/login_auth_test.rs` | Real TCP login with mixed-case username matching Mojang profile | ✅ Passed |
-| `test_live_server_transfer_steelmc_and_paper` | `tests/transfer_live_test.rs` | Live loopback server switching with compression negotiation and Brigadier tree injection | ✅ Passed |
+| `test_live_server_transfer_steelmc_and_paper` | `tests/transfer_live_test.rs` | Real loopback multi-server switching across live SteelMC (25566, 25567) and Paper (25568, 25569) backends | ✅ Passed |
 
 ---
 

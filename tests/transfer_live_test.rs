@@ -27,6 +27,7 @@ async fn test_live_server_transfer_steelmc_and_paper() {
     let steel_lobby_up = TcpStream::connect("127.0.0.1:25566").await.is_ok();
     let steel_up = TcpStream::connect("127.0.0.1:25567").await.is_ok();
     let paper_up = TcpStream::connect("127.0.0.1:25568").await.is_ok();
+    let paper2_up = TcpStream::connect("127.0.0.1:25569").await.is_ok();
 
     if !steel_lobby_up || !steel_up {
         println!("SteelMC servers (ports 25566, 25567) are not running; skipping live test");
@@ -34,7 +35,7 @@ async fn test_live_server_transfer_steelmc_and_paper() {
     }
 
     println!(
-        "Live backend status: Lobby(25566)={steel_lobby_up}, SteelMC(25567)={steel_up}, Paper(25568)={paper_up}"
+        "Live backend status: Lobby(25566)={steel_lobby_up}, SteelMC(25567)={steel_up}, Paper(25568)={paper_up}, Paper2(25569)={paper2_up}"
     );
 
     // 2. Configure FrameMC proxy with live backends
@@ -63,6 +64,17 @@ async fn test_live_server_transfer_steelmc_and_paper() {
             BackendConfig {
                 address: "127.0.0.1".to_string(),
                 port: 25568,
+                forwarding_mode: ForwardingMode::VelocityModern,
+                forwarding_secret: Some("framemc_secret_velocity_2026".to_string()),
+            },
+        );
+    }
+    if paper2_up {
+        servers.insert(
+            "paper2".to_string(),
+            BackendConfig {
+                address: "127.0.0.1".to_string(),
+                port: 25569,
                 forwarding_mode: ForwardingMode::VelocityModern,
                 forwarding_secret: Some("framemc_secret_velocity_2026".to_string()),
             },
@@ -309,6 +321,66 @@ async fn test_live_server_transfer_steelmc_and_paper() {
             "Client failed to receive clientbound Respawn (0x52) when transferring to Paper"
         );
         println!(">>> Successfully transferred to Paper via Velocity Modern Forwarding!");
+
+        if paper2_up {
+            println!(">>> Sending /server paper2 ...");
+            let cmd = ServerboundChatCommand::new("server paper2");
+            let cmd_pkt = cmd.encode_with_version(776);
+            write_packet_with_compression(&mut client_stream, &cmd_pkt, threshold)
+                .await
+                .unwrap();
+
+            let mut received_respawn_to_paper2 = false;
+            let start = std::time::Instant::now();
+            let mut j = 0;
+            while start.elapsed() < std::time::Duration::from_secs(10) {
+                let res = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    read_packet_with_compression(
+                        &mut client_stream,
+                        DEFAULT_MAX_PACKET_SIZE,
+                        threshold,
+                    ),
+                )
+                .await;
+
+                match res {
+                    Ok(Ok(pkt)) => {
+                        println!(
+                            "Client received during Paper2 transfer #{j}: id=0x{:02X} len={}",
+                            pkt.id,
+                            pkt.payload.len()
+                        );
+                        j += 1;
+                        if pkt.id == 0x79 {
+                            if let Ok(chat) =
+                                framemc::routing::state_machine::SystemChatMessagePacket::decode(
+                                    &pkt,
+                                )
+                            {
+                                println!("Chat message: {}", chat.message);
+                            }
+                        }
+                        if pkt.id == 0x52 {
+                            println!(">>> SUCCESS: Client received Respawn packet (0x52) during transfer to Paper 2!");
+                            received_respawn_to_paper2 = true;
+                            break;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        println!("Error reading packet during Paper2 transfer: {e:?}");
+                        break;
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            assert!(
+                received_respawn_to_paper2,
+                "Client failed to receive clientbound Respawn (0x52) when transferring to Paper 2"
+            );
+            println!(">>> Successfully transferred to Paper 2 via Velocity Modern Forwarding!");
+        }
     }
 
     // Clean teardown
