@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -20,18 +20,22 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary_name: framemc
             asset_name: framemc-linux-x86_64
+            archive_name: framemc-linux-x86_64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary_name: framemc.exe
             asset_name: framemc.exe
+            archive_name: framemc-windows-x86_64.zip
           - os: macos-latest
             target: aarch64-apple-darwin
             binary_name: framemc
             asset_name: framemc-macos-aarch64
+            archive_name: framemc-macos-aarch64.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
             binary_name: framemc
             asset_name: framemc-macos-x86_64
+            archive_name: framemc-macos-x86_64.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -49,16 +53,32 @@ jobs:
         run: |
           cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ./${{ matrix.asset_name }}
           chmod +x ./${{ matrix.asset_name }}
+          mkdir staging
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} staging/framemc
+          chmod +x staging/framemc
+          cp config.toml server-icon.png README.md LICENSE-MIT LICENSE-APACHE staging/
+          cp -r scripts staging/
+          cp -r plugins staging/
+          cd staging
+          COPYFILE_DISABLE=1 tar -czvf ../${{ matrix.archive_name }} *
+          cd ..
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} ./${{ matrix.asset_name }}
+          New-Item -ItemType Directory -Path staging
+          Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} staging/framemc.exe
+          Copy-Item config.toml, server-icon.png, README.md, LICENSE-MIT, LICENSE-APACHE staging/
+          Copy-Item -Recurse scripts, plugins staging/
+          Compress-Archive -Path staging/* -DestinationPath ${{ matrix.archive_name }}
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          files: |
+            ${{ matrix.asset_name }}
+            ${{ matrix.archive_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
